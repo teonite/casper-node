@@ -665,6 +665,16 @@ fn should_run_delegate_with_delegation_amount_limits() {
 #[ignore]
 #[test]
 fn should_forcibly_undelegate_after_setting_validator_limits() {
+    let system_fund_request = ExecuteRequestBuilder::standard(
+        *DEFAULT_ACCOUNT_ADDR,
+        CONTRACT_TRANSFER_TO_ACCOUNT,
+        runtime_args! {
+            ARG_TARGET => *SYSTEM_ADDR,
+            ARG_AMOUNT => U512::from(SYSTEM_TRANSFER_AMOUNT)
+        },
+    )
+    .build();
+
     let validator_1_fund_request = ExecuteRequestBuilder::standard(
         *DEFAULT_ACCOUNT_ADDR,
         CONTRACT_TRANSFER_TO_ACCOUNT,
@@ -729,6 +739,7 @@ fn should_forcibly_undelegate_after_setting_validator_limits() {
     .build();
 
     let post_genesis_requests = vec![
+        system_fund_request,
         validator_1_fund_request,
         delegator_1_fund_request,
         delegator_2_fund_request,
@@ -771,7 +782,10 @@ fn should_forcibly_undelegate_after_setting_validator_limits() {
     let bids = builder.get_bids();
     assert_eq!(bids.len(), 3);
 
-    builder.advance_era();
+    builder.run_auction(
+        DEFAULT_GENESIS_TIMESTAMP_MILLIS + DEFAULT_LOCKED_FUNDS_PERIOD_MILLIS,
+        Vec::new(),
+    );
 
     let bids = builder.get_bids();
     assert_eq!(bids.len(), 1);
