@@ -6,6 +6,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use casper_execution_engine::engine_state::Error as EngineStateError;
+use casper_storage::data_access_layer::forced_undelegate::ForcedUndelegateError;
 use casper_storage::{
     data_access_layer::{BlockRewardsError, FeeError, StepError},
     global_state::error::Error as GlobalStateError,
@@ -88,6 +89,12 @@ pub enum BlockExecutionError {
         #[from]
         #[serde(skip_serializing)]
         BlockRewardsError,
+    ),
+    #[error(transparent)]
+    ForcedUndelegate(
+        #[from]
+        #[serde(skip_serializing)]
+        ForcedUndelegateError,
     ),
     /// Failed to compute the approvals checksum.
     #[error("failed to compute approvals checksum: {0}")]

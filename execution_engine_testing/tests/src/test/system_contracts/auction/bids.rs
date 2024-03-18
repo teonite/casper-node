@@ -7,7 +7,7 @@ use tempfile::TempDir;
 
 use casper_engine_test_support::{
     utils, ChainspecConfig, ExecuteRequestBuilder, LmdbWasmTestBuilder, StepRequestBuilder,
-    DEFAULT_ACCOUNTS, DEFAULT_ACCOUNT_ADDR, DEFAULT_ACCOUNT_INITIAL_BALANCE,
+    DEFAULT_ACCOUNTS, DEFAULT_ACCOUNT_ADDR, DEFAULT_ACCOUNT_INITIAL_BALANCE, DEFAULT_BLOCK_TIME,
     DEFAULT_CHAINSPEC_REGISTRY, DEFAULT_EXEC_CONFIG, DEFAULT_GENESIS_CONFIG_HASH,
     DEFAULT_GENESIS_TIMESTAMP_MILLIS, DEFAULT_LOCKED_FUNDS_PERIOD_MILLIS, DEFAULT_PROTOCOL_VERSION,
     DEFAULT_UNBONDING_DELAY, MINIMUM_ACCOUNT_CREATION_BALANCE, PRODUCTION_RUN_GENESIS_REQUEST,
@@ -35,7 +35,7 @@ use casper_types::{
         },
     },
     EntityAddr, EraId, GenesisAccount, GenesisConfigBuilder, GenesisValidator, Key, Motes,
-    ProtocolVersion, PublicKey, RuntimeArgs, SecretKey, U256, U512,
+    ProtocolVersion, PublicKey, SecretKey, U256, U512,
 };
 
 const ARG_TARGET: &str = "target";
@@ -804,18 +804,7 @@ fn should_forcibly_undelegate_after_setting_validator_limits() {
     let bids = builder.get_bids();
     assert_eq!(bids.len(), 3);
 
-    let auction = builder.get_auction_contract_hash();
-    let forced_undelegate_request = ExecuteRequestBuilder::contract_call_by_hash(
-        *SYSTEM_ADDR,
-        auction,
-        METHOD_FORCED_UNDELEGATE,
-        RuntimeArgs::default(),
-    )
-    .build();
-    builder
-        .exec(forced_undelegate_request)
-        .expect_success()
-        .commit();
+    builder.forced_undelegate(None, *DEFAULT_PROTOCOL_VERSION, DEFAULT_BLOCK_TIME);
 
     let bids = builder.get_bids();
     assert_eq!(bids.len(), 1);
