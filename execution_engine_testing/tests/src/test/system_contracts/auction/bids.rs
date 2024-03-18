@@ -837,6 +837,38 @@ fn should_forcibly_undelegate_after_setting_validator_limits() {
         *validator_weights.get(&NON_FOUNDER_VALIDATOR_1_PK).unwrap(),
         U512::from(ADD_BID_AMOUNT_1 + 1_000)
     );
+
+    let unbonding_purses: UnbondingPurses = builder.get_unbonds();
+
+    let delegator_1 = unbonding_purses
+        .get(&DELEGATOR_1_ADDR)
+        .expect("should have delegator_1");
+
+    let delegator_1_unbonding = delegator_1
+        .iter()
+        .find(|x| x.unbonder_public_key() == &*DELEGATOR_1)
+        .expect("should have delegator_1 unbonding");
+
+    assert_eq!(
+        delegator_1_unbonding.amount(),
+        &U512::from(DELEGATE_AMOUNT_1),
+        "expected delegator_1 amount to match"
+    );
+
+    let delegator_2 = unbonding_purses
+        .get(&DELEGATOR_2_ADDR)
+        .expect("should have delegator_2");
+
+    let delegator_2_unbonding = delegator_2
+        .iter()
+        .find(|x| x.unbonder_public_key() == &*DELEGATOR_2)
+        .expect("should have delegator_2 unbonding");
+
+    assert_eq!(
+        delegator_2_unbonding.amount(),
+        &U512::from(DELEGATE_AMOUNT_2),
+        "expected delegator_2 amount to match"
+    );
 }
 
 #[ignore]
