@@ -953,6 +953,15 @@ where
                 CLValue::from_t(result).map_err(Self::reverter)
             })(),
 
+            // Type: `fn forced_undelegate() -> Result<(), Error>`
+            auction::METHOD_FORCED_UNDELEGATE => (|| {
+                runtime
+                    .context
+                    .charge_gas(auction_costs.forced_undelegate.into())?;
+                runtime.forced_undelegate().map_err(Self::reverter)?;
+                CLValue::from_t(()).map_err(Self::reverter)
+            })(),
+
             auction::METHOD_RUN_AUCTION => (|| {
                 runtime.charge_system_contract_call(auction_costs.run_auction)?;
 

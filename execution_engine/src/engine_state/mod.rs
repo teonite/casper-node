@@ -1308,6 +1308,84 @@ where
         Ok(post_state_hash)
     }
 
+    /// Forcibly unbonds delegator bids which fall outside configured delegation limits.
+    pub fn forced_undelegate(
+        &self,
+        pre_state_hash: Digest,
+        protocol_version: ProtocolVersion,
+        next_block_height: u64,
+        time: u64,
+    ) -> Result<Digest, StepError> {
+        let tracking_copy = match self.tracking_copy(pre_state_hash) {
+            Ok(Some(tracking_copy)) => Rc::new(RefCell::new(tracking_copy)),
+            Ok(None) => return Err(StepError::RootNotFound(pre_state_hash)),
+            Err(error) => return Err(StepError::OtherEngineStateError(error.into())),
+        };
+
+        let executor = Executor::new(self.config().clone());
+
+        let virtual_system_contract_by_account = {
+            let system_account_addr = PublicKey::System.to_account_hash();
+
+            tracking_copy
+                .borrow_mut()
+                .get_addressable_entity_by_account_hash(protocol_version, system_account_addr)
+                .map_err(|err| StepError::OtherEngineStateError(Error::TrackingCopy(err)))?
+        };
+
+        let authorization_keys = {
+            let mut ret = BTreeSet::new();
+            ret.insert(PublicKey::System.to_account_hash());
+            ret
+        };
+
+        let gas_limit = Gas::new(U512::from(std::u64::MAX));
+
+        let deploy_hash = {
+            // seeds address generator w/ era_end_timestamp_millis
+            let mut bytes = time.into_bytes()?;
+            bytes.append(&mut next_block_height.into_bytes()?);
+            DeployHash::new(Digest::hash(&bytes))
+        };
+
+        let system_account_hash = PublicKey::System.to_account_hash();
+
+        {
+            let forced_undelegate_stack = self.get_new_system_call_stack();
+            let (_, execution_result): (Option<()>, ExecutionResult) = executor
+                .call_system_contract(
+                    DirectSystemContractCall::ForcedUndelegate,
+                    RuntimeArgs::default(),
+                    &virtual_system_contract_by_account,
+                    EntityKind::Account(system_account_hash),
+                    authorization_keys,
+                    system_account_hash,
+                    BlockTime::default(),
+                    deploy_hash,
+                    gas_limit,
+                    protocol_version,
+                    Rc::clone(&tracking_copy),
+                    Phase::Session,
+                    forced_undelegate_stack,
+                    U512::zero(),
+                );
+
+            if let Some(exec_error) = execution_result.take_error() {
+                return Err(StepError::ForcedUndelegateError(exec_error));
+            }
+        }
+
+        let effects = tracking_copy.borrow().effects();
+
+        // commit
+        let post_state_hash = self
+            .state
+            .commit(pre_state_hash, effects)
+            .map_err(Into::<Error>::into)?;
+
+        Ok(post_state_hash)
+    }
+
     /// Executes a step request.
     pub fn commit_step(&self, step_request: StepRequest) -> Result<StepSuccess, StepError> {
         let tracking_copy = match self.tracking_copy(step_request.pre_state_hash) {

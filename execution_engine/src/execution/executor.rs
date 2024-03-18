@@ -184,7 +184,8 @@ impl Executor {
         let entity_hash = match direct_system_contract_call {
             DirectSystemContractCall::Slash
             | DirectSystemContractCall::RunAuction
-            | DirectSystemContractCall::DistributeRewards => {
+            | DirectSystemContractCall::DistributeRewards
+            | DirectSystemContractCall::ForcedUndelegate => {
                 let auction_hash = system_contract_registry
                     .get(AUCTION)
                     .expect("should have auction hash");
@@ -522,6 +523,8 @@ pub(crate) enum DirectSystemContractCall {
     RunAuction,
     /// Calls auction's `distribute` entry point.
     DistributeRewards,
+    /// Calls auction's `forced_undelegate` entry point.
+    ForcedUndelegate,
     /// Calls handle payment's `finalize` entry point.
     FinalizePayment,
     /// Calls mint's `transfer` entry point.
@@ -538,6 +541,7 @@ impl DirectSystemContractCall {
             DirectSystemContractCall::Slash => auction::METHOD_SLASH,
             DirectSystemContractCall::RunAuction => auction::METHOD_RUN_AUCTION,
             DirectSystemContractCall::DistributeRewards => auction::METHOD_DISTRIBUTE,
+            DirectSystemContractCall::ForcedUndelegate => auction::METHOD_FORCED_UNDELEGATE,
             DirectSystemContractCall::FinalizePayment => handle_payment::METHOD_FINALIZE_PAYMENT,
             DirectSystemContractCall::Transfer => mint::METHOD_TRANSFER,
             DirectSystemContractCall::GetPaymentPurse => handle_payment::METHOD_GET_PAYMENT_PURSE,

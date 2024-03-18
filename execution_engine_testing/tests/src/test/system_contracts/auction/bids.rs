@@ -33,11 +33,11 @@ use casper_types::{
             self, BidsExt, DelegationRate, EraValidators, Error as AuctionError, UnbondingPurses,
             ValidatorWeights, ARG_AMOUNT, ARG_DELEGATION_RATE, ARG_DELEGATOR,
             ARG_MAXIMUM_DELEGATION_AMOUNT, ARG_MINIMUM_DELEGATION_AMOUNT, ARG_NEW_VALIDATOR,
-            ARG_PUBLIC_KEY, ARG_VALIDATOR, ERA_ID_KEY, INITIAL_ERA_ID,
+            ARG_PUBLIC_KEY, ARG_VALIDATOR, ERA_ID_KEY, INITIAL_ERA_ID, METHOD_FORCED_UNDELEGATE,
         },
     },
     EntityAddr, EraId, GenesisAccount, GenesisConfigBuilder, GenesisValidator, Key, Motes,
-    ProtocolVersion, PublicKey, SecretKey, U256, U512,
+    ProtocolVersion, PublicKey, RuntimeArgs, SecretKey, U256, U512,
 };
 
 const ARG_TARGET: &str = "target";
@@ -756,17 +756,41 @@ fn should_forcibly_undelegate_after_setting_validator_limits() {
         builder.exec(request).commit().expect_success();
     }
 
-    builder.advance_eras_by_default_auction_delay();
+    // builder.advance_eras_by_default_auction_delay();
 
     let bids = builder.get_bids();
     assert_eq!(bids.len(), 3);
 
+    let auction_delay = builder.get_auction_delay();
+    // new_era is the first era in the future where new era validator weights will be calculated
+    let new_era = INITIAL_ERA_ID + auction_delay + 1;
+    assert!(builder.get_validator_weights(new_era).is_none());
+    assert_eq!(
+        builder.get_validator_weights(new_era - 1).unwrap(),
+        builder.get_validator_weights(INITIAL_ERA_ID).unwrap()
+    );
+
+    builder.run_auction(
+        DEFAULT_GENESIS_TIMESTAMP_MILLIS + DEFAULT_LOCKED_FUNDS_PERIOD_MILLIS,
+        Vec::new(),
+    );
+
+    let validator_weights: ValidatorWeights = builder
+        .get_validator_weights(new_era)
+        .expect("should have first era validator weights");
+
+    assert_eq!(
+        *validator_weights.get(&NON_FOUNDER_VALIDATOR_1_PK).unwrap(),
+        U512::from(ADD_BID_AMOUNT_1 + DELEGATE_AMOUNT_1 + DELEGATE_AMOUNT_2)
+    );
+
+    // set delegation limits
     let validator_1_add_bid_request = ExecuteRequestBuilder::standard(
         *NON_FOUNDER_VALIDATOR_1_ADDR,
         CONTRACT_ADD_BID,
         runtime_args! {
             ARG_PUBLIC_KEY => NON_FOUNDER_VALIDATOR_1_PK.clone(),
-            ARG_AMOUNT => U512::from(ADD_BID_AMOUNT_1),
+            ARG_AMOUNT => U512::from(1_000),
             ARG_DELEGATION_RATE => ADD_BID_DELEGATION_RATE_1,
             ARG_MINIMUM_DELEGATION_AMOUNT => Some(DELEGATE_AMOUNT_2 + 1_000),
             ARG_MAXIMUM_DELEGATION_AMOUNT => Some(DELEGATE_AMOUNT_1 - 1_000),
@@ -782,13 +806,37 @@ fn should_forcibly_undelegate_after_setting_validator_limits() {
     let bids = builder.get_bids();
     assert_eq!(bids.len(), 3);
 
+    let auction = builder.get_auction_contract_hash();
+    let forced_undelegate_request = ExecuteRequestBuilder::contract_call_by_hash(
+        *SYSTEM_ADDR,
+        auction,
+        METHOD_FORCED_UNDELEGATE,
+        RuntimeArgs::default(),
+    )
+    .build();
+    builder
+        .exec(forced_undelegate_request)
+        .expect_success()
+        .commit();
+
+    let bids = builder.get_bids();
+    assert_eq!(bids.len(), 1);
+
+    assert!(builder.get_validator_weights(new_era + 1).is_none());
+
     builder.run_auction(
         DEFAULT_GENESIS_TIMESTAMP_MILLIS + DEFAULT_LOCKED_FUNDS_PERIOD_MILLIS,
         Vec::new(),
     );
 
-    let bids = builder.get_bids();
-    assert_eq!(bids.len(), 1);
+    let validator_weights: ValidatorWeights = builder
+        .get_validator_weights(new_era + 1)
+        .expect("should have first era validator weights");
+
+    assert_eq!(
+        *validator_weights.get(&NON_FOUNDER_VALIDATOR_1_PK).unwrap(),
+        U512::from(ADD_BID_AMOUNT_1 + 1_000)
+    );
 }
 
 #[ignore]

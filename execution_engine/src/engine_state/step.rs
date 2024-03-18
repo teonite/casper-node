@@ -133,6 +133,9 @@ pub enum StepError {
     /// Error executing a distribute operation.
     #[error("Distribute error: {0}")]
     DistributeError(Error),
+    /// Error executing a forced undelegate operation.
+    #[error("Forced undelegate error: {0}")]
+    ForcedUndelegateError(Error),
     /// Error executing a distribute accumulated fees operation.
     #[error("Distribute accumulated fees error: {0}")]
     DistributeAccumulatedFeesError(Error),

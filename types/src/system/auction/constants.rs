@@ -81,6 +81,8 @@ pub const METHOD_RUN_AUCTION: &str = "run_auction";
 pub const METHOD_SLASH: &str = "slash";
 /// Named constant for method `distribute`.
 pub const METHOD_DISTRIBUTE: &str = "distribute";
+/// Named constant for method `forced_undelegate`.
+pub const METHOD_FORCED_UNDELEGATE: &str = "forced_undelegate";
 /// Named constant for method `read_era_id`.
 pub const METHOD_READ_ERA_ID: &str = "read_era_id";
 /// Named constant for method `activate_bid`.
