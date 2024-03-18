@@ -34,13 +34,13 @@ use casper_types::{
     PublicKey, RuntimeArgs, StoredValue, TransactionHash, TransactionV1Hash, U512,
 };
 
-use crate::data_access_layer::forced_undelegate::{
-    ForcedUndelegateError, ForcedUndelegateRequest, ForcedUndelegateResult,
-};
 use crate::{
     data_access_layer::{
         bidding::{AuctionMethodRet, BiddingRequest, BiddingResult},
         era_validators::EraValidatorsResult,
+        forced_undelegate::{
+            ForcedUndelegateError, ForcedUndelegateRequest, ForcedUndelegateResult,
+        },
         tagged_values::{TaggedValuesRequest, TaggedValuesResult},
         transfer::{TransferRequest, TransferRequestArgs, TransferResult},
         AddressableEntityRequest, AddressableEntityResult, AuctionMethod, BalanceIdentifier,

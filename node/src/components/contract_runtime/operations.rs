@@ -8,12 +8,10 @@ use casper_execution_engine::engine_state::{
     execution_result::{ExecutionResultAndMessages, ExecutionResults},
     DeployItem, ExecuteRequest, ExecutionEngineV1, ExecutionResult as EngineExecutionResult,
 };
-use casper_storage::data_access_layer::forced_undelegate::{
-    ForcedUndelegateRequest, ForcedUndelegateResult,
-};
 use casper_storage::{
     block_store::types::ApprovalsHashes,
     data_access_layer::{
+        forced_undelegate::{ForcedUndelegateRequest, ForcedUndelegateResult},
         AuctionMethod, BiddingRequest, BiddingResult, BlockRewardsRequest, BlockRewardsResult,
         DataAccessLayer, EraValidatorsRequest, EraValidatorsResult, EvictItem, FeeRequest,
         FeeResult, FlushRequest, PruneRequest, PruneResult, StepRequest, StepResult,
