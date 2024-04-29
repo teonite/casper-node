@@ -299,7 +299,7 @@ mod tests {
     use tokio::time::Instant;
 
     use super::{Limiter, NodeId, PublicKey};
-    use crate::{testing::init_logging, types::ValidatorMatrix};
+    use crate::{consensus::signer::NodeSigner, testing::init_logging, types::ValidatorMatrix};
 
     /// Something that happens almost immediately, with some allowance for test jitter.
     const SHORT_TIME: Duration = Duration::from_millis(250);
@@ -455,6 +455,7 @@ mod tests {
         let secret_key = SecretKey::random(&mut rng);
         let consensus_key = PublicKey::from(&secret_key);
         let wait_metric = new_wait_time_sec();
+        let secret_signing_key = Arc::new(secret_key);
         let limiter = Limiter::new(
             1_000,
             wait_metric.clone(),
@@ -463,8 +464,9 @@ mod tests {
                 ChainNameDigest::from_chain_name("casper-example"),
                 None,
                 EraId::from(0),
-                Arc::new(secret_key),
+                secret_signing_key.clone(),
                 consensus_key.clone(),
+                NodeSigner::mock(secret_signing_key),
                 2,
             ),
         );

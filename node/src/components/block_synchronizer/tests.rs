@@ -27,6 +27,7 @@ use crate::{
         block_synchronizer::block_acquisition::BlockAcquisitionState,
         consensus::tests::utils::{ALICE_PUBLIC_KEY, ALICE_SECRET_KEY},
     },
+    consensus::signer::NodeSigner,
     effect::Effect,
     reactor::{EventQueueHandle, QueueKind, Scheduler},
     tls::KeyFingerprint,
@@ -150,6 +151,7 @@ impl TestEnv {
             EraId::from(0),
             self.validator_keys[0].clone(),
             PublicKey::from(self.validator_keys[0].as_ref()),
+            NodeSigner::mock(self.validator_keys[0].clone()),
             1,
         );
         validator_matrix.register_validator_weights(self.block.era_id(), validator_weights);

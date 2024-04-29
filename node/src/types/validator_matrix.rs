@@ -17,6 +17,8 @@ use casper_types::{
     BlockHeaderV2, ChainNameDigest, EraId, FinalitySignatureV2, PublicKey, SecretKey, U512,
 };
 
+use crate::consensus::signer::NodeSigner;
+
 const MAX_VALIDATOR_MATRIX_ENTRIES: usize = 6;
 const_assert!(MAX_VALIDATOR_MATRIX_ENTRIES % 2 == 0);
 
@@ -50,6 +52,7 @@ pub(crate) struct ValidatorMatrix {
     finality_threshold_fraction: Ratio<u64>,
     secret_signing_key: Arc<SecretKey>,
     public_signing_key: PublicKey,
+    signer: NodeSigner,
     auction_delay: u64,
     retrograde_latch: Option<EraId>,
 }
@@ -62,6 +65,7 @@ impl ValidatorMatrix {
         chainspec_activation_era: EraId,
         secret_signing_key: Arc<SecretKey>,
         public_signing_key: PublicKey,
+        signer: NodeSigner,
         auction_delay: u64,
     ) -> Self {
         let inner = Arc::new(RwLock::new(BTreeMap::new()));
@@ -73,6 +77,7 @@ impl ValidatorMatrix {
             chainspec_activation_era,
             secret_signing_key,
             public_signing_key,
+            signer,
             auction_delay,
             retrograde_latch: None,
         }
@@ -89,6 +94,7 @@ impl ValidatorMatrix {
             iter::once((public_signing_key.clone(), 100.into())).collect(),
             finality_threshold_fraction,
         );
+        let signer = NodeSigner::mock(secret_signing_key.clone());
         ValidatorMatrix {
             inner: Arc::new(RwLock::new(iter::once((era_id, weights)).collect())),
             chainspec_name_hash: ChainNameDigest::from_chain_name("casper-example"),
@@ -97,6 +103,7 @@ impl ValidatorMatrix {
             finality_threshold_fraction,
             public_signing_key,
             secret_signing_key,
+            signer,
             auction_delay: 1,
             retrograde_latch: None,
         }
@@ -119,6 +126,7 @@ impl ValidatorMatrix {
                 .collect(),
             finality_threshold_fraction,
         );
+        let signer = NodeSigner::mock(secret_signing_key.clone());
         ValidatorMatrix {
             inner: Arc::new(RwLock::new(iter::once((era_id, weights)).collect())),
             chainspec_name_hash: ChainNameDigest::from_chain_name("casper-example"),
@@ -127,6 +135,7 @@ impl ValidatorMatrix {
             finality_threshold_fraction,
             public_signing_key,
             secret_signing_key,
+            signer,
             auction_delay: 1,
             retrograde_latch: None,
         }

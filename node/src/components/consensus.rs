@@ -12,6 +12,7 @@ pub(crate) mod error;
 mod leader_sequence;
 mod metrics;
 pub mod protocols;
+pub mod signer;
 #[cfg(test)]
 pub(crate) mod tests;
 mod traits;

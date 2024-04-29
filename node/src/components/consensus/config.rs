@@ -9,6 +9,7 @@ use crate::{
     components::consensus::{
         era_supervisor::PAST_EVIDENCE_ERAS,
         protocols::{highway::config::Config as HighwayConfig, zug::config::Config as ZugConfig},
+        signer::{NodeSigner, NodeSignerError},
         EraId,
     },
     utils::{External, LoadError, Loadable},
@@ -56,6 +57,11 @@ impl Config {
         let secret_signing_key: Arc<SecretKey> = self.secret_key_path.clone().load(root)?;
         let public_key: PublicKey = PublicKey::from(secret_signing_key.as_ref());
         Ok((secret_signing_key, public_key))
+    }
+
+    /// Creates a local or remote signer based on configuration file.
+    pub(crate) fn setup_signer(&self) -> Result<NodeSigner, NodeSignerError> {
+        unimplemented!()
     }
 }
 
