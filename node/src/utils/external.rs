@@ -176,6 +176,14 @@ impl Loadable for Arc<SecretKey> {
     }
 }
 
+impl Loadable for SecretKey {
+    type Error = crypto::ErrorExt;
+
+    fn from_path<P: AsRef<Path>>(path: P) -> Result<Self, Self::Error> {
+        Ok(SecretKey::from_file(path)?)
+    }
+}
+
 impl Loadable for Vec<u8> {
     type Error = ReadFileError;
 

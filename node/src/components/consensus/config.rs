@@ -9,9 +9,9 @@ use crate::{
     components::consensus::{
         era_supervisor::PAST_EVIDENCE_ERAS,
         protocols::{highway::config::Config as HighwayConfig, zug::config::Config as ZugConfig},
-        signer::{NodeSigner, NodeSignerError},
         EraId,
     },
+    types::{NodeSigner, NodeSignerError},
     utils::{External, LoadError, Loadable},
 };
 
@@ -46,16 +46,16 @@ impl Default for Config {
     }
 }
 
-type LoadKeyError = LoadError<<Arc<SecretKey> as Loadable>::Error>;
+type LoadKeyError = LoadError<<SecretKey as Loadable>::Error>;
 
 impl Config {
     /// Loads the secret key from the configuration file and derives the public key.
     pub(crate) fn load_keys<P: AsRef<Path>>(
         &self,
         root: P,
-    ) -> Result<(Arc<SecretKey>, PublicKey), LoadKeyError> {
-        let secret_signing_key: Arc<SecretKey> = self.secret_key_path.clone().load(root)?;
-        let public_key: PublicKey = PublicKey::from(secret_signing_key.as_ref());
+    ) -> Result<(SecretKey, PublicKey), LoadKeyError> {
+        let secret_signing_key: SecretKey = self.secret_key_path.clone().load(root)?;
+        let public_key: PublicKey = PublicKey::from(&secret_signing_key);
         Ok((secret_signing_key, public_key))
     }
 
