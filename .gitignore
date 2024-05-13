@@ -161,3 +161,11 @@ notes
 .lh/*
 
 *.patch
+
+# direnv config files
+.envrc
+.direnv
+
+# Nix stuff
+flake.nix
+flake.lock
