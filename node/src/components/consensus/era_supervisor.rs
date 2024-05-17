@@ -382,15 +382,12 @@ impl EraSupervisor {
             vec![]
         } else {
             info!(era = era_id.value(), %our_id, "start voting");
-            let secret = Keypair::new(
-                self.validator_matrix.secret_signing_key().clone(),
-                our_id.clone(),
-            );
+            let signer = self.validator_matrix.signer().clone();
             let instance_id = self.era(era_id).consensus.instance_id();
             let unit_hash_file = self.unit_file(instance_id);
             self.era_mut(era_id).consensus.activate_validator(
                 our_id,
-                secret,
+                signer,
                 now,
                 Some(unit_hash_file),
             )
@@ -573,14 +570,11 @@ impl EraSupervisor {
                 info!(era = era_id.value(), %our_id, "not voting; not a validator");
             } else {
                 info!(era = era_id.value(), %our_id, "start voting");
-                let secret = Keypair::new(
-                    self.validator_matrix.secret_signing_key().clone(),
-                    our_id.clone(),
-                );
+                let signer = self.validator_matrix.signer().clone();
                 let unit_hash_file = self.unit_file(&instance_id);
                 outcomes.extend(self.era_mut(era_id).consensus.activate_validator(
                     our_id,
-                    secret,
+                    signer,
                     now,
                     Some(unit_hash_file),
                 ))

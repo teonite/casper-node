@@ -182,11 +182,13 @@ mod tests {
         cl_context::{ClContext, Keypair},
         protocols::common,
     };
-    use casper_types::{PublicKey, SecretKey, Timestamp, U512};
+    use casper_types::{PublicKey, SecretKey, Signer, Timestamp, U512};
     use tempfile::tempdir;
 
     use super::*;
+    use crate::{consensus::tests::utils::ALICE_SIGNER, types::NodeSigner};
     use once_cell::sync::Lazy;
+
     const INSTANCE_ID_DATA: &[u8; 1] = &[123u8; 1];
     const ALICE_WEIGHT: u64 = 1000000;
     const ALICE_SECRET_KEY_BYTES: [u8; SecretKey::ED25519_LENGTH] = [3; SecretKey::ED25519_LENGTH];
@@ -196,9 +198,8 @@ mod tests {
         Lazy::new(|| PublicKey::from(Lazy::force(&ALICE_SECRET_KEY)));
 
     fn create_message_fn() -> Box<dyn Fn(RoundId, Content<ClContext>) -> SignedMessage<ClContext>> {
-        let alice_keypair = Keypair::from(std::sync::Arc::new(
-            SecretKey::ed25519_from_bytes(ALICE_SECRET_KEY_BYTES).unwrap(),
-        ));
+        let secret_key = SecretKey::ed25519_from_bytes(ALICE_SECRET_KEY_BYTES).unwrap();
+        let signer = NodeSigner::mock(secret_key);
         let weights: Vec<(PublicKey, U512)> =
             vec![(ALICE_PUBLIC_KEY.clone(), U512::from(ALICE_WEIGHT))];
         let validators = common::validators::<ClContext>(
@@ -208,14 +209,8 @@ mod tests {
         );
         let instance_id = ClContext::hash(INSTANCE_ID_DATA);
         Box::new(move |round_id, content: Content<ClContext>| {
-            let validator_idx = validators.get_index(alice_keypair.public_key()).unwrap();
-            SignedMessage::sign_new(
-                round_id,
-                instance_id,
-                content,
-                validator_idx,
-                &alice_keypair,
-            )
+            let validator_idx = validators.get_index(&signer.public_signing_key()).unwrap();
+            SignedMessage::sign_new(round_id, instance_id, content, validator_idx, &signer)
         })
     }
 

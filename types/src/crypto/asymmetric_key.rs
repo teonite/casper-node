@@ -180,6 +180,7 @@ where
 /// A secret or private asymmetric key.
 #[cfg_attr(feature = "datasize", derive(DataSize))]
 #[non_exhaustive]
+#[derive(Clone)]
 pub enum SecretKey {
     /// System secret key.
     System,

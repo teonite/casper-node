@@ -61,7 +61,7 @@ use crate::{
     },
     reactor::{EventQueueHandle, QueueKind},
     tls::{self, TlsCert, ValidationError},
-    types::NodeId,
+    types::{NodeId, NodeSigner},
     utils::display_error,
 };
 
@@ -218,8 +218,8 @@ where
     net_metrics: Weak<Metrics>,
     /// Chain info extract from chainspec.
     chain_info: ChainInfo,
-    /// Optional set of signing keys, to identify as a node during handshake.
-    node_key_pair: Option<NodeKeyPair>,
+    /// Optional node signer interface, to identify as a node during handshake.
+    node_signer: Option<Arc<NodeSigner>>,
     /// Our own public listening address.
     public_addr: Option<SocketAddr>,
     /// Timeout for handshake completion.
@@ -242,7 +242,7 @@ impl<REv> NetworkContext<REv> {
     pub(super) fn new(
         cfg: Config,
         our_identity: Identity,
-        node_key_pair: Option<NodeKeyPair>,
+        node_signer: Option<Arc<NodeSigner>>,
         chain_info: ChainInfo,
         net_metrics: &Arc<Metrics>,
     ) -> Self {
@@ -269,7 +269,7 @@ impl<REv> NetworkContext<REv> {
             secret_key,
             net_metrics: Arc::downgrade(net_metrics),
             chain_info,
-            node_key_pair,
+            node_signer,
             handshake_timeout: cfg.handshake_timeout,
             payload_weights: cfg.estimator_weights.clone(),
             tarpit_version_threshold: cfg.tarpit_version_threshold,
@@ -471,7 +471,7 @@ where
     // Manually encode a handshake.
     let handshake_message = context.chain_info.create_handshake::<P>(
         context.public_addr.expect("component not initialized"),
-        context.node_key_pair.as_ref(),
+        context.node_signer.as_ref(),
         connection_id,
         context.is_syncing.load(Ordering::SeqCst),
     );

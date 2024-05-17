@@ -20,7 +20,7 @@ use tracing_futures::Instrument;
 
 use casper_types::testing::TestRng;
 
-use casper_types::{Chainspec, ChainspecRawBytes};
+use casper_types::{Chainspec, ChainspecRawBytes, SecretKey};
 
 use super::ConditionCheckReactor;
 use crate::{

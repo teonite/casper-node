@@ -299,7 +299,10 @@ mod tests {
     use tokio::time::Instant;
 
     use super::{Limiter, NodeId, PublicKey};
-    use crate::{consensus::signer::NodeSigner, testing::init_logging, types::ValidatorMatrix};
+    use crate::{
+        testing::init_logging,
+        types::{NodeSigner, ValidatorMatrix},
+    };
 
     /// Something that happens almost immediately, with some allowance for test jitter.
     const SHORT_TIME: Duration = Duration::from_millis(250);
@@ -317,7 +320,7 @@ mod tests {
         // We insert one unrelated active validator to avoid triggering the automatic disabling of
         // the limiter in case there are no active validators.
         let validator_matrix =
-            ValidatorMatrix::new_with_validator(Arc::new(SecretKey::random(&mut rng)));
+            ValidatorMatrix::new_with_validator(NodeSigner::mock(SecretKey::random(&mut rng)));
         let limiter = Limiter::new(0, new_wait_time_sec(), validator_matrix);
 
         // Try with non-validators or unknown nodes.
@@ -341,7 +344,7 @@ mod tests {
 
         let secret_key = SecretKey::random(&mut rng);
         let consensus_key = PublicKey::from(&secret_key);
-        let validator_matrix = ValidatorMatrix::new_with_validator(Arc::new(secret_key));
+        let validator_matrix = ValidatorMatrix::new_with_validator(NodeSigner::mock(secret_key));
         let limiter = Limiter::new(1_000, new_wait_time_sec(), validator_matrix);
 
         let handle = limiter.create_handle(NodeId::random(&mut rng), Some(consensus_key));
@@ -360,7 +363,7 @@ mod tests {
         // We insert one unrelated active validator to avoid triggering the automatic disabling of
         // the limiter in case there are no active validators.
         let validator_matrix =
-            ValidatorMatrix::new_with_validator(Arc::new(SecretKey::random(rng)));
+            ValidatorMatrix::new_with_validator(NodeSigner::mock(SecretKey::random(rng)));
         let peers = [
             (NodeId::random(rng), Some(PublicKey::random(rng))),
             (NodeId::random(rng), None),
@@ -403,7 +406,7 @@ mod tests {
         // We insert one unrelated active validator to avoid triggering the automatic disabling of
         // the limiter in case there are no active validators.
         let validator_matrix =
-            ValidatorMatrix::new_with_validator(Arc::new(SecretKey::random(&mut rng)));
+            ValidatorMatrix::new_with_validator(NodeSigner::mock(SecretKey::random(&mut rng)));
         let limiter = Limiter::new(1_000, wait_metric.clone(), validator_matrix);
 
         let start = Instant::now();
@@ -455,7 +458,7 @@ mod tests {
         let secret_key = SecretKey::random(&mut rng);
         let consensus_key = PublicKey::from(&secret_key);
         let wait_metric = new_wait_time_sec();
-        let secret_signing_key = Arc::new(secret_key);
+        let signer = NodeSigner::mock(secret_key);
         let limiter = Limiter::new(
             1_000,
             wait_metric.clone(),
@@ -464,9 +467,7 @@ mod tests {
                 ChainNameDigest::from_chain_name("casper-example"),
                 None,
                 EraId::from(0),
-                secret_signing_key.clone(),
-                consensus_key.clone(),
-                NodeSigner::mock(secret_signing_key),
+                signer,
                 2,
             ),
         );
@@ -507,7 +508,7 @@ mod tests {
 
         let secret_key = SecretKey::random(&mut rng);
         let consensus_key = PublicKey::from(&secret_key);
-        let validator_matrix = ValidatorMatrix::new_with_validator(Arc::new(secret_key));
+        let validator_matrix = ValidatorMatrix::new_with_validator(NodeSigner::mock(secret_key));
         let limiter = Limiter::new(1_000, new_wait_time_sec(), validator_matrix);
 
         let non_validator_handle = limiter.create_handle(NodeId::random(&mut rng), None);

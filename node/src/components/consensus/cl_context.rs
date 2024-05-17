@@ -8,7 +8,7 @@ use casper_types::{crypto, Digest, PublicKey, SecretKey, Signature};
 
 use crate::{
     components::consensus::traits::{ConsensusValueT, Context, ValidatorSecret},
-    types::BlockPayload,
+    types::{BlockPayload, NodeSigner},
 };
 
 #[derive(DataSize)]
@@ -65,7 +65,7 @@ pub struct ClContext;
 impl Context for ClContext {
     type ConsensusValue = Arc<BlockPayload>;
     type ValidatorId = PublicKey;
-    type ValidatorSecret = Keypair;
+    type ValidatorSecret = Arc<NodeSigner>;
     type Signature = Signature;
     type Hash = Digest;
     type InstanceId = Digest;

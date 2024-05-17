@@ -38,6 +38,9 @@ pub enum Error {
 
     /// Error trying to manipulate the system key.
     System(String),
+
+    /// Error using Signer interface.
+    Signer(String),
 }
 
 impl Display for Error {
@@ -57,6 +60,9 @@ impl Display for Error {
             }
             Error::System(error_msg) => {
                 write!(formatter, "invalid operation on system key: {}", error_msg)
+            }
+            Error::Signer(error_msg) => {
+                write!(formatter, "signer interface error: {}", error_msg)
             }
         }
     }
@@ -80,7 +86,10 @@ impl StdError for Error {
         match self {
             Error::FromHex(error) => Some(error),
             Error::FromBase64(error) => Some(error),
-            Error::AsymmetricKey(_) | Error::SignatureError | Error::System(_) => None,
+            Error::AsymmetricKey(_)
+            | Error::SignatureError
+            | Error::System(_)
+            | Error::Signer(_) => None,
         }
     }
 }

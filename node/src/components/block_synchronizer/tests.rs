@@ -17,8 +17,8 @@ use casper_storage::data_access_layer::ExecutionResultsChecksumResult;
 use casper_types::{
     global_state::TrieMerkleProof, testing::TestRng, AccessRights, BlockV2, CLValue,
     ChainNameDigest, Chainspec, Deploy, Digest, EraId, FinalitySignatureV2, Key,
-    LegacyRequiredFinality, ProtocolVersion, PublicKey, SecretKey, StoredValue, TestBlockBuilder,
-    TestBlockV1Builder, TimeDiff, URef, U512,
+    LegacyRequiredFinality, ProtocolVersion, PublicKey, SecretKey, Signer, StoredValue,
+    TestBlockBuilder, TestBlockV1Builder, TimeDiff, URef, U512,
 };
 
 use super::*;
@@ -27,11 +27,11 @@ use crate::{
         block_synchronizer::block_acquisition::BlockAcquisitionState,
         consensus::tests::utils::{ALICE_PUBLIC_KEY, ALICE_SECRET_KEY},
     },
-    consensus::signer::NodeSigner,
+    consensus::tests::utils::ALICE_SIGNER,
     effect::Effect,
     reactor::{EventQueueHandle, QueueKind, Scheduler},
     tls::KeyFingerprint,
-    types::{BlockExecutionResultsOrChunkId, ValueOrChunk},
+    types::{BlockExecutionResultsOrChunkId, NodeSigner, ValueOrChunk},
     utils,
 };
 
@@ -105,7 +105,7 @@ impl MockReactor {
 
 struct TestEnv {
     block: Block,
-    validator_keys: Vec<Arc<SecretKey>>,
+    validator_signers: Vec<Arc<NodeSigner>>,
     peers: Vec<NodeId>,
 }
 
@@ -115,7 +115,7 @@ impl TestEnv {
     fn with_block(self, block: Block) -> Self {
         Self {
             block,
-            validator_keys: self.validator_keys,
+            validator_signers: self.validator_signers,
             peers: self.peers,
         }
     }
@@ -124,8 +124,8 @@ impl TestEnv {
         &self.block
     }
 
-    fn validator_keys(&self) -> &Vec<Arc<SecretKey>> {
-        &self.validator_keys
+    fn validator_signers(&self) -> &Vec<Arc<NodeSigner>> {
+        &self.validator_signers
     }
 
     fn peers(&self) -> &Vec<NodeId> {
@@ -136,12 +136,12 @@ impl TestEnv {
     // All validators have equal weights
     fn gen_validator_matrix(&self) -> ValidatorMatrix {
         let validator_weights: BTreeMap<PublicKey, U512> = self
-            .validator_keys
+            .validator_signers
             .iter()
-            .map(|key| (PublicKey::from(key.as_ref()), 100.into())) // we give each validator equal weight
+            .map(|signer| (signer.public_signing_key(), 100.into())) // we give each validator equal weight
             .collect();
 
-        assert_eq!(validator_weights.len(), self.validator_keys.len());
+        assert_eq!(validator_weights.len(), self.validator_signers.len());
 
         // Set up a validator matrix for the era in which our test block was created
         let mut validator_matrix = ValidatorMatrix::new(
@@ -149,9 +149,7 @@ impl TestEnv {
             ChainNameDigest::from_chain_name("casper-example"),
             None,
             EraId::from(0),
-            self.validator_keys[0].clone(),
-            PublicKey::from(self.validator_keys[0].as_ref()),
-            NodeSigner::mock(self.validator_keys[0].clone()),
+            self.validator_signers[0].clone(),
             1,
         );
         validator_matrix.register_validator_weights(self.block.era_id(), validator_weights);
@@ -161,15 +159,18 @@ impl TestEnv {
 
     fn random(rng: &mut TestRng) -> TestEnv {
         let num_validators: usize = rng.gen_range(3..100);
-        let validator_keys: Vec<_> = iter::repeat_with(|| Arc::new(SecretKey::random(rng)))
-            .take(num_validators)
-            .collect();
+        let validator_signers: Vec<_> = iter::repeat_with(|| {
+            let secret_key = SecretKey::random(rng);
+            NodeSigner::mock(secret_key)
+        })
+        .take(num_validators)
+        .collect();
 
         let num_peers = rng.gen_range(10..20);
 
         TestEnv {
             block: TestBlockBuilder::new().build(rng).into(),
-            validator_keys,
+            validator_signers,
             peers: iter::repeat(())
                 .take(num_peers)
                 .map(|_| NodeId::from(rng.gen::<KeyFingerprint>()))
@@ -207,21 +208,22 @@ async fn need_next(
     reactor.process_effects(effects).await
 }
 
-fn register_multiple_signatures<'a, I: IntoIterator<Item = &'a Arc<SecretKey>>>(
+fn register_multiple_signatures<'a, I: IntoIterator<Item = &'a Arc<NodeSigner>>>(
     builder: &mut BlockBuilder,
     block: &Block,
-    validator_keys_iter: I,
+    validator_signers: I,
     chain_name_hash: ChainNameDigest,
 ) {
-    for secret_key in validator_keys_iter {
+    for signer in validator_signers {
         // Register a finality signature
         let signature = FinalitySignatureV2::create(
             *block.hash(),
             block.height(),
             block.era_id(),
             chain_name_hash,
-            secret_key.as_ref(),
-        );
+            &**signer,
+        )
+        .expect("should create finality signature");
         assert!(signature.is_verified().is_ok());
         assert!(builder
             .register_finality_signature(signature.into(), None)
@@ -359,7 +361,7 @@ async fn global_state_sync_wont_stall_with_bad_peers() {
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let cfg = Config {
         latch_reset_interval: TimeDiff::from_millis(TEST_LATCH_RESET_INTERVAL_MILLIS),
         ..Default::default()
@@ -626,7 +628,7 @@ async fn should_not_stall_after_registering_new_era_validator_weights() {
     let era_id = block.era_id();
 
     // Set up a validator matrix.
-    let mut validator_matrix = ValidatorMatrix::new_with_validator(ALICE_SECRET_KEY.clone());
+    let mut validator_matrix = ValidatorMatrix::new_with_validator(ALICE_SIGNER.clone());
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(&mut rng, validator_matrix.clone(), Config::default());
 
@@ -1065,7 +1067,7 @@ async fn registering_header_successfully_triggers_signatures_fetch_for_weak_fina
     assert_eq!(
         effects.len(),
         min(
-            test_env.validator_keys().len(),
+            test_env.validator_signers().len(),
             MAX_SIMULTANEOUS_PEERS as usize
         )
     );
@@ -1090,7 +1092,7 @@ async fn fwd_more_signatures_are_requested_if_weak_finality_is_not_reached() {
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_signers = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(&mut rng, validator_matrix, Config::default());
 
@@ -1120,8 +1122,9 @@ async fn fwd_more_signatures_are_requested_if_weak_finality_is_not_reached() {
         block.height(),
         block.era_id(),
         chain_name_hash,
-        validators_secret_keys[0].as_ref(),
-    );
+        &*validators_signers[0],
+    )
+    .expect("should create finality signature");
     assert!(signature.is_verified().is_ok());
     let effects = block_synchronizer.handle_event(
         mock_reactor.effect_builder(),
@@ -1138,7 +1141,7 @@ async fn fwd_more_signatures_are_requested_if_weak_finality_is_not_reached() {
     assert_eq!(
         effects.len(),
         min(
-            validators_secret_keys.len() - 1,
+            validators_signers.len() - 1,
             MAX_SIMULTANEOUS_PEERS as usize
         )
     );
@@ -1153,17 +1156,17 @@ async fn fwd_more_signatures_are_requested_if_weak_finality_is_not_reached() {
                 assert!(peers.contains(&peer));
                 assert_eq!(id.block_hash(), block.hash());
                 assert_eq!(id.era_id(), block.era_id());
-                assert_ne!(*id.public_key(), PublicKey::from(validators_secret_keys[0].as_ref()));
+                assert_ne!(*id.public_key(), validators_signers[0].public_signing_key());
             }
         );
     }
 
     // Register finality signatures to reach weak finality
     let mut generated_effects = Effects::new();
-    for secret_key in validators_secret_keys
+    for signer in validators_signers
         .iter()
         .skip(1)
-        .take(weak_finality_threshold(validators_secret_keys.len()))
+        .take(weak_finality_threshold(validators_signers.len()))
     {
         // Register a finality signature
         let signature = FinalitySignatureV2::create(
@@ -1171,8 +1174,9 @@ async fn fwd_more_signatures_are_requested_if_weak_finality_is_not_reached() {
             block.height(),
             block.era_id(),
             chain_name_hash,
-            secret_key.as_ref(),
-        );
+            &**signer,
+        )
+        .expect("should create finality signature");
         assert!(signature.is_verified().is_ok());
         let effects = block_synchronizer.handle_event(
             mock_reactor.effect_builder(),
@@ -1221,7 +1225,7 @@ async fn fwd_sync_is_not_blocked_by_failed_signatures_fetch_within_latch_interva
     let expected_block_hash = *block.hash();
     let era_id = block.era_id();
     let validator_matrix = test_env.gen_validator_matrix();
-    let num_validators = test_env.validator_keys().len() as u8;
+    let num_validators = test_env.validator_signers().len() as u8;
     let cfg = Config {
         ..Default::default()
     };
@@ -1353,7 +1357,7 @@ async fn next_action_for_have_weak_finality_is_fetching_block_body() {
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(&mut rng, validator_matrix, Config::default());
 
@@ -1421,7 +1425,7 @@ async fn registering_block_body_transitions_builder_to_have_block_state() {
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(&mut rng, validator_matrix, Config::default());
 
@@ -1503,7 +1507,7 @@ async fn fwd_having_block_body_for_block_without_deploys_requires_only_signature
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(&mut rng, validator_matrix, Config::default());
 
@@ -1569,7 +1573,7 @@ async fn fwd_having_block_body_for_block_with_deploys_requires_approvals_hashes(
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(&mut rng, validator_matrix, Config::default());
 
@@ -1655,7 +1659,7 @@ async fn fwd_registering_approvals_hashes_triggers_fetch_for_deploys() {
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(&mut rng, validator_matrix, Config::default());
 
@@ -1734,7 +1738,7 @@ async fn fwd_have_block_body_without_deploys_and_strict_finality_transitions_sta
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(&mut rng, validator_matrix, Config::default());
 
@@ -1801,7 +1805,7 @@ async fn fwd_have_block_with_strict_finality_requires_creation_of_finalized_bloc
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(&mut rng, validator_matrix, Config::default());
 
@@ -1875,7 +1879,7 @@ async fn fwd_have_strict_finality_requests_enqueue_when_finalized_block_is_creat
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(&mut rng, validator_matrix, Config::default());
 
@@ -1972,7 +1976,7 @@ async fn fwd_builder_status_is_executing_when_block_is_enqueued_for_execution() 
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(&mut rng, validator_matrix, Config::default());
 
@@ -2050,7 +2054,7 @@ async fn fwd_sync_is_finished_when_block_is_marked_as_executed() {
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(&mut rng, validator_matrix, Config::default());
 
@@ -2124,7 +2128,7 @@ async fn historical_sync_announces_meta_block() {
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(&mut rng, validator_matrix, Config::default());
 
@@ -2272,7 +2276,7 @@ async fn synchronizer_halts_if_block_cannot_be_made_executable() {
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(&mut rng, validator_matrix, Config::default());
 
@@ -2372,7 +2376,7 @@ async fn historical_sync_skips_exec_results_and_deploys_if_block_empty() {
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(rng, validator_matrix, Default::default())
             .with_legacy_finality(LegacyRequiredFinality::Strict);
@@ -2481,7 +2485,7 @@ async fn historical_sync_no_legacy_block() {
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(rng, validator_matrix, Default::default())
             .with_legacy_finality(LegacyRequiredFinality::Strict);
@@ -2709,7 +2713,7 @@ async fn historical_sync_legacy_block_strict_finality() {
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(rng, validator_matrix, Default::default())
             .with_legacy_finality(LegacyRequiredFinality::Strict);
@@ -2911,7 +2915,7 @@ async fn historical_sync_legacy_block_weak_finality() {
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(rng, validator_matrix, Default::default())
             .with_legacy_finality(LegacyRequiredFinality::Weak);
@@ -3126,7 +3130,7 @@ async fn historical_sync_legacy_block_any_finality() {
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(rng, validator_matrix, Default::default())
             .with_legacy_finality(LegacyRequiredFinality::Any);
@@ -3339,7 +3343,7 @@ async fn fwd_sync_latch_should_not_decrement_for_old_responses() {
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(&mut rng, validator_matrix, Config::default());
 
@@ -3472,7 +3476,7 @@ async fn fwd_sync_latch_should_not_decrement_for_old_responses() {
     // continue asking for the block body.
     {
         let mut generated_effects = Effects::new();
-        for secret_key in validators_secret_keys
+        for signer in validators_secret_keys
             .iter()
             .take(weak_finality_threshold(validators_secret_keys.len()))
         {
@@ -3482,8 +3486,9 @@ async fn fwd_sync_latch_should_not_decrement_for_old_responses() {
                 block.height(),
                 block.era_id(),
                 chain_name_hash,
-                secret_key.as_ref(),
-            );
+                &**signer,
+            )
+            .expect("should create finality signature");
             assert!(signature.is_verified().is_ok());
             let effects = block_synchronizer.handle_event(
                 mock_reactor.effect_builder(),
@@ -3531,7 +3536,7 @@ async fn fwd_sync_latch_should_not_decrement_for_old_responses() {
 
         // Receive some more finality signatures to check if the latch decrements.
         let mut generated_effects = Effects::new();
-        for secret_key in validators_secret_keys
+        for signer in validators_secret_keys
             .iter()
             .skip(weak_finality_threshold(validators_secret_keys.len()))
             .take(2)
@@ -3542,8 +3547,9 @@ async fn fwd_sync_latch_should_not_decrement_for_old_responses() {
                 block.height(),
                 block.era_id(),
                 chain_name_hash,
-                secret_key.as_ref(),
-            );
+                &**signer,
+            )
+            .expect("should create finality signature");
             assert!(signature.is_verified().is_ok());
             let effects = block_synchronizer.handle_event(
                 mock_reactor.effect_builder(),
@@ -3750,7 +3756,7 @@ async fn fwd_sync_latch_should_not_decrement_for_old_responses() {
     // state to HaveStrictFinality and continue to request to make the block executable.
     {
         let mut generated_effects = Effects::new();
-        for secret_key in validators_secret_keys.iter().rev().take(
+        for signer in validators_secret_keys.iter().rev().take(
             strict_finality_threshold(validators_secret_keys.len())
                 - weak_finality_threshold(validators_secret_keys.len()),
         ) {
@@ -3760,8 +3766,9 @@ async fn fwd_sync_latch_should_not_decrement_for_old_responses() {
                 block.height(),
                 block.era_id(),
                 chain_name_hash,
-                secret_key.as_ref(),
-            );
+                &**signer,
+            )
+            .expect("should create finality signature");
             assert!(signature.is_verified().is_ok());
             let effects = block_synchronizer.handle_event(
                 mock_reactor.effect_builder(),
@@ -3832,7 +3839,7 @@ async fn historical_sync_latch_should_not_decrement_for_old_deploy_fetch_respons
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(rng, validator_matrix, Default::default())
             .with_legacy_finality(LegacyRequiredFinality::Strict);
@@ -4103,7 +4110,7 @@ async fn historical_sync_latch_should_not_decrement_for_old_execution_results() 
     let block = test_env.block();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
-    let validators_secret_keys = test_env.validator_keys();
+    let validators_secret_keys = test_env.validator_signers();
     let mut block_synchronizer =
         BlockSynchronizer::new_initialized(rng, validator_matrix, Default::default())
             .with_legacy_finality(LegacyRequiredFinality::Strict);

@@ -4,6 +4,7 @@ use core::{
     fmt::{self, Display, Formatter},
     hash::{Hash, Hasher},
 };
+use std::sync::Arc;
 
 #[cfg(feature = "datasize")]
 use datasize::DataSize;
@@ -17,7 +18,11 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(any(feature = "testing", test))]
 use crate::testing::TestRng;
-use crate::{crypto, BlockHash, ChainNameDigest, EraId, PublicKey, SecretKey, Signature};
+use crate::{
+    block::FinalitySignatureError,
+    crypto::{self, Signer},
+    BlockHash, ChainNameDigest, EraId, PublicKey, SecretKey, Signature, SignerError,
+};
 
 /// A validator's signature of a block, confirming it is finalized.
 ///
@@ -59,12 +64,12 @@ impl FinalitySignatureV2 {
         block_height: u64,
         era_id: EraId,
         chain_name_hash: ChainNameDigest,
-        secret_key: &SecretKey,
-    ) -> Self {
+        signer: &impl Signer,
+    ) -> Result<Self, SignerError> {
         let bytes = Self::bytes_to_sign(block_hash, block_height, era_id, chain_name_hash);
-        let public_key = PublicKey::from(secret_key);
-        let signature = crypto::sign(bytes, secret_key, &public_key);
-        FinalitySignatureV2 {
+        let public_key = signer.public_signing_key();
+        let signature = signer.sign_bytes(bytes)?;
+        Ok(FinalitySignatureV2 {
             block_hash,
             block_height,
             era_id,
@@ -73,7 +78,7 @@ impl FinalitySignatureV2 {
             public_key,
             #[cfg(any(feature = "once_cell", test))]
             is_verified: OnceCell::with_value(Ok(())),
-        }
+        })
     }
 
     /// Returns the block hash of the associated block.
@@ -160,13 +165,14 @@ impl FinalitySignatureV2 {
         rng: &mut TestRng,
     ) -> Self {
         let secret_key = SecretKey::random(rng);
-        FinalitySignatureV2::create(
-            block_hash,
-            block_height,
-            era_id,
-            chain_name_hash,
-            &secret_key,
-        )
+        todo!();
+        // FinalitySignatureV2::create(
+        //     block_hash,
+        //     block_height,
+        //     era_id,
+        //     chain_name_hash,
+        //     &secret_key,
+        // )
     }
 
     fn bytes_to_sign(
@@ -315,7 +321,7 @@ impl Display for FinalitySignatureV2 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TestBlockBuilder;
+    use crate::{TestBlockBuilder, TestSigner};
 
     #[test]
     fn finality_signature() {
@@ -323,6 +329,7 @@ mod tests {
         let block = TestBlockBuilder::new().build(rng);
         // Signature should be over block hash, block height, era id and chain name hash.
         let secret_key = SecretKey::random(rng);
+        let signer = Arc::new(TestSigner::new(secret_key));
         let era_id = EraId::from(1);
         let chain_name_hash = ChainNameDigest::from_chain_name("example");
         let finality_signature = FinalitySignatureV2::create(
@@ -330,8 +337,9 @@ mod tests {
             block.height(),
             era_id,
             chain_name_hash,
-            &secret_key,
-        );
+            &*signer,
+        )
+        .expect("should create finality signature");
         finality_signature
             .is_verified()
             .expect("should have verified");

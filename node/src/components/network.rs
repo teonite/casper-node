@@ -112,7 +112,7 @@ use crate::{
     },
     reactor::{Finalize, ReactorEvent},
     tls,
-    types::{NodeId, ValidatorMatrix},
+    types::{NodeId, NodeSigner, ValidatorMatrix},
     utils::{self, display_error, Source},
     NodeRng,
 };
@@ -242,7 +242,7 @@ where
     pub(crate) fn new<C: Into<ChainInfo>>(
         cfg: Config,
         our_identity: Identity,
-        node_key_pair: Option<(Arc<SecretKey>, PublicKey)>,
+        node_signer: Option<Arc<NodeSigner>>,
         registry: &Registry,
         chain_info_source: C,
         validator_matrix: ValidatorMatrix,
@@ -280,7 +280,7 @@ where
         let context = Arc::new(NetworkContext::new(
             cfg.clone(),
             our_identity,
-            node_key_pair.map(NodeKeyPair::new),
+            node_signer,
             chain_info_source.into(),
             &net_metrics,
         ));

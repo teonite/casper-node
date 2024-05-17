@@ -141,7 +141,7 @@ impl SignatureAcquisition {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, fmt::Debug, iter};
+    use std::{collections::BTreeSet, fmt::Debug, iter, sync::Arc};
 
     use assert_matches::assert_matches;
     use itertools::Itertools;
@@ -151,6 +151,8 @@ mod tests {
     use casper_types::{
         testing::TestRng, BlockHash, ChainNameDigest, EraId, FinalitySignatureV2, SecretKey, U512,
     };
+
+    use crate::types::NodeSigner;
 
     use super::*;
 
@@ -165,6 +167,15 @@ mod tests {
         let public = PublicKey::from(&secret);
 
         (public, secret)
+    }
+
+    fn validators(rng: &mut TestRng, count: usize) -> Vec<(PublicKey, Arc<NodeSigner>)> {
+        iter::repeat_with(|| {
+            let (public_key, secret_key) = keypair(rng);
+            (public_key, NodeSigner::mock(secret_key))
+        })
+        .take(count)
+        .collect()
     }
 
     /// Asserts that 2 iterators iterate over the same set of items.
@@ -184,7 +195,7 @@ mod tests {
 
     fn test_finality_with_ratio(finality_threshold: Ratio<u64>, first_weight: SignatureWeight) {
         let rng = &mut TestRng::new();
-        let validators = iter::repeat_with(|| keypair(rng)).take(4).collect_vec();
+        let validators = validators(rng, 4);
         let block_hash = BlockHash::random(rng);
         let block_height = rng.gen();
         let era_id = EraId::new(rng.gen());
@@ -205,21 +216,22 @@ mod tests {
         );
 
         // Signature for the validator #0 weighting 1:
-        let (public_0, secret_0) = validators.get(0).unwrap();
+        let (public_0, signer_0) = validators.get(0).unwrap();
         let finality_signature = FinalitySignatureV2::create(
             block_hash,
             block_height,
             era_id,
             chain_name_hash,
-            secret_0,
-        );
+            &**signer_0,
+        )
+        .expect("should create finalty signature");
         assert_matches!(
             signature_acquisition.apply_signature(finality_signature.into(), &weights),
             Acceptance::NeededIt
         );
         assert_iter_equal!(signature_acquisition.have_signatures(), [public_0]);
         assert_iter_equal!(signature_acquisition.not_vacant(), [public_0]);
-        assert!(signature_acquisition.have_no_vacant() == false);
+        assert_eq!(signature_acquisition.have_no_vacant(), false);
         assert_iter_equal!(
             signature_acquisition.not_pending(),
             validators.iter().map(|(p, _)| p),
@@ -228,14 +240,15 @@ mod tests {
         assert_eq!(signature_acquisition.signature_weight(), first_weight);
 
         // Signature for the validator #2 weighting 3:
-        let (public_2, secret_2) = validators.get(2).unwrap();
+        let (public_2, signer_2) = validators.get(2).unwrap();
         let finality_signature = FinalitySignatureV2::create(
             block_hash,
             block_height,
             era_id,
             chain_name_hash,
-            secret_2,
-        );
+            &**signer_2,
+        )
+        .expect("should create finality signature");
         assert_matches!(
             signature_acquisition.apply_signature(finality_signature.into(), &weights),
             Acceptance::NeededIt
@@ -245,7 +258,7 @@ mod tests {
             [public_0, public_2],
         );
         assert_iter_equal!(signature_acquisition.not_vacant(), [public_0, public_2]);
-        assert!(signature_acquisition.have_no_vacant() == false);
+        assert_eq!(signature_acquisition.have_no_vacant(), false);
         assert_iter_equal!(
             signature_acquisition.not_pending(),
             validators.iter().map(|(p, _)| p),
@@ -257,14 +270,15 @@ mod tests {
         );
 
         // Signature for the validator #3 weighting 4:
-        let (public_3, secret_3) = validators.get(3).unwrap();
+        let (public_3, signer_3) = validators.get(3).unwrap();
         let finality_signature = FinalitySignatureV2::create(
             block_hash,
             block_height,
             era_id,
             chain_name_hash,
-            secret_3,
-        );
+            &**signer_3,
+        )
+        .expect("should create finality signature");
         assert_matches!(
             signature_acquisition.apply_signature(finality_signature.into(), &weights),
             Acceptance::NeededIt
@@ -307,7 +321,7 @@ mod tests {
     #[test]
     fn adding_a_not_already_stored_validator_signature_works() {
         let rng = &mut TestRng::new();
-        let validators = iter::repeat_with(|| keypair(rng)).take(4).collect_vec();
+        let validators = validators(rng, 4);
         let block_hash = BlockHash::random(rng);
         let block_height = rng.gen();
         let chain_name_hash = ChainNameDigest::random(rng);
@@ -328,14 +342,15 @@ mod tests {
         );
 
         // Signature for an already stored validator:
-        let (_public_0, secret_0) = validators.first().unwrap();
+        let (_public_0, signer_0) = validators.first().unwrap();
         let finality_signature = FinalitySignatureV2::create(
             block_hash,
             block_height,
             era_id,
             chain_name_hash,
-            secret_0,
-        );
+            &**signer_0,
+        )
+        .expect("should create finality signature");
         assert_matches!(
             signature_acquisition.apply_signature(finality_signature.into(), &weights),
             Acceptance::NeededIt
@@ -343,8 +358,15 @@ mod tests {
 
         // Signature for an unknown validator:
         let (_public, secret) = keypair(rng);
-        let finality_signature =
-            FinalitySignatureV2::create(block_hash, block_height, era_id, chain_name_hash, &secret);
+        let signer = NodeSigner::mock(secret);
+        let finality_signature = FinalitySignatureV2::create(
+            block_hash,
+            block_height,
+            era_id,
+            chain_name_hash,
+            &*signer,
+        )
+        .expect("should create finality signature");
         assert_matches!(
             signature_acquisition.apply_signature(finality_signature.into(), &weights),
             Acceptance::NeededIt
@@ -354,7 +376,7 @@ mod tests {
     #[test]
     fn signing_twice_does_nothing() {
         let rng = &mut TestRng::new();
-        let validators = iter::repeat_with(|| keypair(rng)).take(4).collect_vec();
+        let validators = validators(rng, 4);
         let block_hash = BlockHash::random(rng);
         let block_height = rng.gen();
         let chain_name_hash = ChainNameDigest::random(rng);
@@ -374,7 +396,7 @@ mod tests {
             LegacyRequiredFinality::Strict,
         );
 
-        let (_public_0, secret_0) = validators.first().unwrap();
+        let (_public_0, signer_0) = validators.first().unwrap();
 
         // Signature for an already stored validator:
         let finality_signature = FinalitySignatureV2::create(
@@ -382,8 +404,9 @@ mod tests {
             block_height,
             era_id,
             chain_name_hash,
-            secret_0,
-        );
+            &**signer_0,
+        )
+        .expect("should create finality signature");
         assert_matches!(
             signature_acquisition.apply_signature(finality_signature.into(), &weights),
             Acceptance::NeededIt
@@ -395,8 +418,9 @@ mod tests {
             block_height,
             era_id,
             chain_name_hash,
-            secret_0,
-        );
+            &**signer_0,
+        )
+        .expect("should create finality signature");
         assert_matches!(
             signature_acquisition.apply_signature(finality_signature.into(), &weights),
             Acceptance::HadIt
@@ -406,7 +430,7 @@ mod tests {
     #[test]
     fn register_pending_has_the_expected_behavior() {
         let rng = &mut TestRng::new();
-        let validators = iter::repeat_with(|| keypair(rng)).take(4).collect_vec();
+        let validators = validators(rng, 4);
         let block_hash = BlockHash::random(rng);
         let block_height = rng.gen();
         let era_id = EraId::new(rng.gen());
@@ -427,7 +451,7 @@ mod tests {
         );
 
         // Set the validator #0 weighting 1 as pending:
-        let (public_0, secret_0) = validators.get(0).unwrap();
+        let (public_0, signer_0) = validators.get(0).unwrap();
         signature_acquisition.register_pending(public_0.clone());
         assert_iter_equal!(signature_acquisition.have_signatures(), []);
         assert_iter_equal!(signature_acquisition.not_vacant(), [public_0]);
@@ -447,8 +471,9 @@ mod tests {
             block_height,
             era_id,
             chain_name_hash,
-            secret_0,
-        );
+            &**signer_0,
+        )
+        .expect("should create finality signature");
         assert_matches!(
             signature_acquisition.apply_signature(finality_signature.into(), &weights),
             Acceptance::NeededIt
@@ -469,14 +494,14 @@ mod tests {
     #[test]
     fn register_pending_an_unknown_validator_works() {
         let rng = &mut TestRng::new();
-        let validators = iter::repeat_with(|| keypair(rng)).take(4).collect_vec();
+        let validators = validators(rng, 4);
         let mut signature_acquisition = SignatureAcquisition::new(
             validators.iter().map(|(p, _)| p.clone()).collect(),
             LegacyRequiredFinality::Strict,
         );
 
         // Set a new validator as pending:
-        let (public, _secret) = keypair(rng);
+        let (public, _signer) = keypair(rng);
         signature_acquisition.register_pending(public.clone());
         assert_iter_equal!(signature_acquisition.have_signatures(), []);
         assert_iter_equal!(signature_acquisition.not_vacant(), [&public]);

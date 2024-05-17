@@ -18,7 +18,7 @@ use crate::{
     },
     effect::requests::StorageRequest,
     reactor::{EventQueueHandle, QueueKind, Scheduler},
-    types::{BlockPayload, ValidatorMatrix},
+    types::{BlockPayload, NodeSigner, ValidatorMatrix},
     utils::{self, Loadable},
 };
 
@@ -50,13 +50,10 @@ struct MockReactor {
 }
 
 impl MockReactor {
-    fn new<I: IntoIterator<Item = PublicKey>>(
-        our_secret_key: Arc<SecretKey>,
-        public_keys: I,
-    ) -> Self {
+    fn new<I: IntoIterator<Item = PublicKey>>(our_signer: Arc<NodeSigner>, public_keys: I) -> Self {
         MockReactor {
             scheduler: utils::leak(Scheduler::new(QueueKind::weights(), None)),
-            validator_matrix: ValidatorMatrix::new_with_validators(our_secret_key, public_keys),
+            validator_matrix: ValidatorMatrix::new_with_validators(our_signer, public_keys),
         }
     }
 
@@ -310,12 +307,12 @@ pub(super) fn new_non_transfer(
     }
 }
 
-type SecretKeys = BTreeMap<PublicKey, Arc<SecretKey>>;
+type Signers = BTreeMap<PublicKey, Arc<NodeSigner>>;
 
 struct ValidationContext {
     chainspec: Arc<Chainspec>,
     // Validators
-    secret_keys: SecretKeys,
+    signers: Signers,
     // map of height → block
     past_blocks: HashMap<u64, Block>,
     // blocks that will be "stored" during validation
@@ -339,7 +336,7 @@ impl ValidationContext {
         let (chainspec, _) = <(Chainspec, ChainspecRawBytes)>::from_resources("local");
         Self {
             chainspec: Arc::new(chainspec),
-            secret_keys: BTreeMap::new(),
+            signers: BTreeMap::new(),
             past_blocks: HashMap::new(),
             delayed_blocks: HashMap::new(),
             transactions: HashMap::new(),
@@ -355,15 +352,16 @@ impl ValidationContext {
 
     fn with_num_validators(mut self, rng: &mut TestRng, num_validators: usize) -> Self {
         for _ in 0..num_validators {
-            let validator_key = Arc::new(SecretKey::random(rng));
-            self.secret_keys
-                .insert(PublicKey::from(&*validator_key), validator_key.clone());
+            let validator_key = SecretKey::random(rng);
+            let public_key = PublicKey::from(&validator_key);
+            let signer = NodeSigner::mock(validator_key);
+            self.signers.insert(public_key, signer);
         }
         self
     }
 
     fn get_validators(&self) -> Vec<PublicKey> {
-        self.secret_keys.keys().cloned().collect()
+        self.signers.keys().cloned().collect()
     }
 
     fn with_past_blocks(
@@ -424,17 +422,15 @@ impl ValidationContext {
                     .get(&height)
                     .or_else(|| self.delayed_blocks.get(&height))
                     .expect("should have block");
-                let secret_key = self
-                    .secret_keys
-                    .get(validator)
-                    .expect("should have validator");
+                let signer = self.signers.get(validator).expect("should have validator");
                 let signature = FinalitySignatureV2::create(
                     *block.hash(),
                     block.height(),
                     block.era_id(),
                     self.chainspec.name_hash(),
-                    secret_key,
-                );
+                    &**signer,
+                )
+                .expect("should create finality signature");
                 self.signatures
                     .entry(height)
                     .or_default()
@@ -453,17 +449,17 @@ impl ValidationContext {
         for validator in validators {
             for height in min_height..=max_height {
                 let block = self.past_blocks.get(&height).expect("should have block");
-                let secret_key = self
-                    .secret_keys
-                    .get(validator)
-                    .expect("should have validator");
-                let signature = FinalitySignature::V2(FinalitySignatureV2::create(
-                    *block.hash(),
-                    block.height(),
-                    block.era_id(),
-                    self.chainspec.name_hash(),
-                    secret_key,
-                ));
+                let signer = self.signers.get(validator).expect("should have validator");
+                let signature = FinalitySignature::V2(
+                    FinalitySignatureV2::create(
+                        *block.hash(),
+                        block.height(),
+                        block.era_id(),
+                        self.chainspec.name_hash(),
+                        &**signer,
+                    )
+                    .expect("should create finality signature"),
+                );
                 self.fetchable_signatures
                     .insert(*signature.fetch_id(), signature);
             }
@@ -589,7 +585,7 @@ impl ValidationContext {
                                 .unwrap_or_default();
                             SingleBlockRewardedSignatures::from_validator_set(
                                 &signing_validators,
-                                self.secret_keys.keys(),
+                                self.signers.keys(),
                             )
                         }),
                 )
@@ -610,13 +606,13 @@ impl ValidationContext {
         let proposed_block = self.proposed_block(timestamp);
 
         // Create the reactor and component.
-        let our_secret_key = self
-            .secret_keys
+        let our_signer = self
+            .signers
             .values()
             .next()
             .expect("should have a secret key")
             .clone();
-        let reactor = MockReactor::new(our_secret_key, self.secret_keys.keys().cloned());
+        let reactor = MockReactor::new(our_signer, self.signers.keys().cloned());
         let effect_builder =
             EffectBuilder::new(EventQueueHandle::without_shutdown(reactor.scheduler));
         let mut block_validator = BlockValidator::new(
@@ -996,9 +992,10 @@ async fn should_fetch_from_multiple_peers() {
         );
 
         // Create the reactor and component.
-        let secret_key = Arc::new(SecretKey::random(&mut rng));
-        let public_key = PublicKey::from(&*secret_key);
-        let reactor = MockReactor::new(secret_key, vec![public_key]);
+        let secret_key = SecretKey::random(&mut rng);
+        let public_key = PublicKey::from(&secret_key);
+        let signer = NodeSigner::mock(secret_key);
+        let reactor = MockReactor::new(signer, vec![public_key]);
         let effect_builder =
             EffectBuilder::new(EventQueueHandle::without_shutdown(reactor.scheduler));
         let (chainspec, _) = <(Chainspec, ChainspecRawBytes)>::from_resources("local");

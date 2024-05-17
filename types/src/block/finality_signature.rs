@@ -1,6 +1,8 @@
+mod error;
 mod finality_signature_v1;
 mod finality_signature_v2;
 
+pub use error::FinalitySignatureError;
 pub use finality_signature_v1::FinalitySignatureV1;
 pub use finality_signature_v2::FinalitySignatureV2;
 

@@ -12,7 +12,6 @@ pub(crate) mod error;
 mod leader_sequence;
 mod metrics;
 pub mod protocols;
-pub mod signer;
 #[cfg(test)]
 pub(crate) mod tests;
 mod traits;
@@ -68,6 +67,7 @@ pub(crate) use leader_sequence::LeaderSequence;
 pub(crate) use protocols::highway::max_rounds_per_era;
 #[cfg(test)]
 pub(crate) use protocols::highway::HighwayMessage;
+pub(crate) use traits::ValidatorSecret;
 
 const COMPONENT_NAME: &str = "consensus";
 

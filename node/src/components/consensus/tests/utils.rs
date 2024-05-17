@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{clone::Clone, sync::Arc};
 
 use num::Zero;
 use once_cell::sync::Lazy;
@@ -10,13 +10,15 @@ use casper_types::{
 
 use crate::{
     tls::{KeyFingerprint, Sha512},
-    types::NodeId,
+    types::{NodeId, NodeSigner},
     utils::Loadable,
 };
 
-pub static ALICE_SECRET_KEY: Lazy<Arc<SecretKey>> =
-    Lazy::new(|| Arc::new(SecretKey::ed25519_from_bytes([0; SecretKey::ED25519_LENGTH]).unwrap()));
-pub static ALICE_PUBLIC_KEY: Lazy<PublicKey> = Lazy::new(|| PublicKey::from(&**ALICE_SECRET_KEY));
+pub static ALICE_SECRET_KEY: Lazy<SecretKey> =
+    Lazy::new(|| SecretKey::ed25519_from_bytes([0; SecretKey::ED25519_LENGTH]).unwrap());
+pub static ALICE_SIGNER: Lazy<Arc<NodeSigner>> =
+    Lazy::new(|| NodeSigner::mock((*ALICE_SECRET_KEY).clone()));
+pub static ALICE_PUBLIC_KEY: Lazy<PublicKey> = Lazy::new(|| PublicKey::from(&*ALICE_SECRET_KEY));
 pub static ALICE_NODE_ID: Lazy<NodeId> = Lazy::new(|| {
     NodeId::from(KeyFingerprint::from(Sha512::new(match *ALICE_PUBLIC_KEY {
         PublicKey::Ed25519(pub_key) => pub_key,
@@ -24,9 +26,11 @@ pub static ALICE_NODE_ID: Lazy<NodeId> = Lazy::new(|| {
     })))
 });
 
-pub static BOB_SECRET_KEY: Lazy<Arc<SecretKey>> =
-    Lazy::new(|| Arc::new(SecretKey::ed25519_from_bytes([1; SecretKey::ED25519_LENGTH]).unwrap()));
-pub static BOB_PUBLIC_KEY: Lazy<PublicKey> = Lazy::new(|| PublicKey::from(&**BOB_SECRET_KEY));
+pub static BOB_SECRET_KEY: Lazy<SecretKey> =
+    Lazy::new(|| SecretKey::ed25519_from_bytes([1; SecretKey::ED25519_LENGTH]).unwrap());
+pub static BOB_SIGNER: Lazy<Arc<NodeSigner>> =
+    Lazy::new(|| NodeSigner::mock((*BOB_SECRET_KEY).clone()));
+pub static BOB_PUBLIC_KEY: Lazy<PublicKey> = Lazy::new(|| PublicKey::from(&*BOB_SECRET_KEY));
 pub static BOB_NODE_ID: Lazy<NodeId> = Lazy::new(|| {
     NodeId::from(KeyFingerprint::from(Sha512::new(match *BOB_PUBLIC_KEY {
         PublicKey::Ed25519(pub_key) => pub_key,
@@ -34,17 +38,23 @@ pub static BOB_NODE_ID: Lazy<NodeId> = Lazy::new(|| {
     })))
 });
 
-pub static CAROL_SECRET_KEY: Lazy<Arc<SecretKey>> =
-    Lazy::new(|| Arc::new(SecretKey::ed25519_from_bytes([2; SecretKey::ED25519_LENGTH]).unwrap()));
-pub static CAROL_PUBLIC_KEY: Lazy<PublicKey> = Lazy::new(|| PublicKey::from(&**CAROL_SECRET_KEY));
+pub static CAROL_SECRET_KEY: Lazy<SecretKey> =
+    Lazy::new(|| SecretKey::ed25519_from_bytes([2; SecretKey::ED25519_LENGTH]).unwrap());
+pub static CAROL_SIGNER: Lazy<Arc<NodeSigner>> =
+    Lazy::new(|| NodeSigner::mock((*CAROL_SECRET_KEY).clone()));
+pub static CAROL_PUBLIC_KEY: Lazy<PublicKey> = Lazy::new(|| PublicKey::from(&*CAROL_SECRET_KEY));
 
-pub static DAVE_SECRET_KEY: Lazy<Arc<SecretKey>> =
-    Lazy::new(|| Arc::new(SecretKey::ed25519_from_bytes([3; SecretKey::ED25519_LENGTH]).unwrap()));
-pub static DAVE_PUBLIC_KEY: Lazy<PublicKey> = Lazy::new(|| PublicKey::from(&**DAVE_SECRET_KEY));
+pub static DAVE_SECRET_KEY: Lazy<SecretKey> =
+    Lazy::new(|| SecretKey::ed25519_from_bytes([3; SecretKey::ED25519_LENGTH]).unwrap());
+pub static DAVE_SIGNER: Lazy<Arc<NodeSigner>> =
+    Lazy::new(|| NodeSigner::mock((*DAVE_SECRET_KEY).clone()));
+pub static DAVE_PUBLIC_KEY: Lazy<PublicKey> = Lazy::new(|| PublicKey::from(&*DAVE_SECRET_KEY));
 
-pub static ELLEN_SECRET_KEY: Lazy<Arc<SecretKey>> =
-    Lazy::new(|| Arc::new(SecretKey::ed25519_from_bytes([4; SecretKey::ED25519_LENGTH]).unwrap()));
-pub static ELLEN_PUBLIC_KEY: Lazy<PublicKey> = Lazy::new(|| PublicKey::from(&**ELLEN_SECRET_KEY));
+pub static ELLEN_SECRET_KEY: Lazy<SecretKey> =
+    Lazy::new(|| SecretKey::ed25519_from_bytes([4; SecretKey::ED25519_LENGTH]).unwrap());
+pub static ELLEN_SIGNER: Lazy<Arc<NodeSigner>> =
+    Lazy::new(|| NodeSigner::mock((*ELLEN_SECRET_KEY).clone()));
+pub static ELLEN_PUBLIC_KEY: Lazy<PublicKey> = Lazy::new(|| PublicKey::from(&*ELLEN_SECRET_KEY));
 
 /// Loads the local chainspec and overrides timestamp and genesis account with the given stakes.
 /// The test `Chainspec` returned has eras with exactly two blocks.

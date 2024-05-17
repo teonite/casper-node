@@ -1086,7 +1086,7 @@ impl reactor::Reactor for MainReactor {
 
         let trusted_hash = config.value().node.trusted_hash;
         let (root_dir, config) = config.into_parts();
-        let (our_secret_key, our_public_key) = config.consensus.load_keys(&root_dir)?;
+        let (_our_secret_key, our_public_key) = config.consensus.load_keys(&root_dir)?;
         let signer = config.consensus.setup_signer()?;
         let validator_matrix = ValidatorMatrix::new(
             chainspec.core_config.finality_threshold_fraction,
@@ -1097,9 +1097,7 @@ impl reactor::Reactor for MainReactor {
                 .as_ref()
                 .and_then(|global_state_update| global_state_update.validators.clone()),
             chainspec.protocol_config.activation_point.era_id(),
-            our_secret_key.clone(),
-            our_public_key.clone(),
-            signer,
+            signer.clone(),
             chainspec.core_config.auction_delay,
         );
 
@@ -1129,7 +1127,7 @@ impl reactor::Reactor for MainReactor {
         let network = Network::new(
             config.network.clone(),
             network_identity,
-            Some((our_secret_key, our_public_key)),
+            Some(signer),
             registry,
             chainspec.as_ref(),
             validator_matrix.clone(),
@@ -1449,6 +1447,7 @@ impl MainReactor {
                 if let Some(finality_signature) = self
                     .validator_matrix
                     .create_finality_signature(block.header())
+                    .unwrap()
                 {
                     debug!(
                         %finality_signature,

@@ -60,7 +60,7 @@ impl Config {
     }
 
     /// Creates a local or remote signer based on configuration file.
-    pub(crate) fn setup_signer(&self) -> Result<NodeSigner, NodeSignerError> {
+    pub(crate) fn setup_signer(&self) -> Result<Arc<NodeSigner>, NodeSignerError> {
         unimplemented!()
     }
 }

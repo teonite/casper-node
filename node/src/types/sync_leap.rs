@@ -462,7 +462,7 @@ mod tests {
         types::{
             sync_leap::SyncLeapValidationError,
             sync_leap_validation_metadata::SyncLeapValidationMetaData, EraValidatorWeights,
-            SyncLeapIdentifier,
+            NodeSigner, SyncLeapIdentifier,
         },
         utils::BlockSignatureError,
     };
@@ -494,8 +494,10 @@ mod tests {
                  public_key: _,
                  weight: _,
              }| {
+                let signer = NodeSigner::mock((*secret_key).clone());
                 let fin_sig =
-                    FinalitySignatureV2::create(hash, height, era_id, chain_name_hash, secret_key);
+                    FinalitySignatureV2::create(hash, height, era_id, chain_name_hash, &*signer)
+                        .expect("should create finality signature");
                 if add_proofs {
                     block_signatures
                         .insert_signature(fin_sig.public_key().clone(), *fin_sig.signature());

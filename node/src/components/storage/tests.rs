@@ -45,7 +45,7 @@ use crate::{
     storage::TransactionHeader,
     testing::{ComponentHarness, UnitTestEvent},
     types::{
-        sync_leap_validation_metadata::SyncLeapValidationMetaData, BlockWithMetadata,
+        sync_leap_validation_metadata::SyncLeapValidationMetaData, BlockWithMetadata, NodeSigner,
         SyncLeapIdentifier,
     },
     utils::{Loadable, WithDir},
@@ -111,6 +111,7 @@ fn create_sync_leap_test_chain(
     let mut trusted_validator_weights = BTreeMap::new();
 
     let (validator_secret_key, validator_public_key) = generate_ed25519_keypair();
+    let signer = NodeSigner::mock(validator_secret_key);
     trusted_validator_weights.insert(validator_public_key, U512::from(2000000000000u64));
 
     let mut blocks: Vec<Block> = vec![];
@@ -151,8 +152,9 @@ fn create_sync_leap_test_chain(
             block.height(),
             block.era_id(),
             chainspec.name_hash(),
-            &validator_secret_key,
-        );
+            &*signer,
+        )
+        .expect("should create finality signature");
         assert!(fs.is_verified().is_ok());
 
         let mut block_signatures = BlockSignaturesV2::new(
@@ -285,14 +287,15 @@ fn random_signatures(
     let mut block_signatures =
         BlockSignaturesV2::new(block_hash, block_height, era_id, chain_name_hash);
     for _ in 0..3 {
-        let secret_key = SecretKey::random(rng);
+        let signer = NodeSigner::mock(SecretKey::random(rng));
         let signature = FinalitySignatureV2::create(
             block_hash,
             block_height,
             era_id,
             chain_name_hash,
-            &secret_key,
-        );
+            &*signer,
+        )
+        .expect("should create finality signature");
         block_signatures.insert_signature(signature.public_key().clone(), *signature.signature());
     }
     block_signatures.into()

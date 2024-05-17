@@ -5,6 +5,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs::File,
     io::Write,
+    sync::Arc,
 };
 
 use casper_types::{PublicKey, Timestamp};
@@ -26,6 +27,7 @@ use crate::{
         utils::ValidatorIndex,
         LeaderSequence, ProposedBlock, SerializedMessage,
     },
+    types::NodeSigner,
     NodeRng,
 };
 
@@ -44,7 +46,7 @@ use super::new_test_highway_protocol_with_era_height;
 pub(super) struct ConsensusEnvironment {
     highway: Box<dyn ConsensusProtocol<ClContext>>,
     leaders: LeaderSequence,
-    validators: BTreeMap<PublicKey, (Keypair, u64)>,
+    validators: BTreeMap<PublicKey, (Arc<NodeSigner>, u64)>,
     current_round_start: u64,
     slow_validators: BTreeSet<PublicKey>,
     rng: NodeRng,
@@ -56,7 +58,7 @@ impl ConsensusEnvironment {
     /// The public keys in `slow_validators` should exist in the `validators` map and have their
     /// associated keypairs and weights.
     pub(super) fn new(
-        validators: BTreeMap<PublicKey, (Keypair, u64)>,
+        validators: BTreeMap<PublicKey, (Arc<NodeSigner>, u64)>,
         slow_validators: BTreeSet<PublicKey>,
     ) -> Self {
         let mut highway = new_test_highway_protocol_with_era_height(
@@ -67,11 +69,11 @@ impl ConsensusEnvironment {
             Some(10),
         );
         // our active validator will be the first in the map
-        let (pub_key, (keypair, _)) = validators.iter().next().unwrap();
+        let (pub_key, (signer, _)) = validators.iter().next().unwrap();
         // this is necessary for the round exponent to be tracked - it only happens in the
         // ActiveValidator
         let _ =
-            highway.activate_validator(pub_key.clone(), keypair.clone(), Timestamp::zero(), None);
+            highway.activate_validator(pub_key.clone(), signer.clone(), Timestamp::zero(), None);
         Self {
             highway,
             leaders: LeaderSequence::new(
@@ -372,7 +374,7 @@ impl ConsensusEnvironment {
     fn create_swunit_from(
         &self,
         creator: ValidatorIndex,
-        keypair: &Keypair,
+        node_signer: &Arc<NodeSigner>,
         state: &State<ClContext>,
         delay: u64,
         value: Option<<ClContext as Context>::ConsensusValue>,
@@ -391,7 +393,7 @@ impl ConsensusEnvironment {
             round_exp: 0,
             endorsed: BTreeSet::new(),
         };
-        SignedWireUnit::new(wunit.into_hashed(), keypair)
+        SignedWireUnit::new(wunit.into_hashed(), node_signer)
     }
 
     /// Simulates a proposal being sent by a node other than node 0. This is just a message

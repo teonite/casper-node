@@ -6,7 +6,9 @@ use casper_types::{
     testing::TestRng, ChainNameDigest, FinalitySignatureV2, TestBlockBuilder, Transaction,
 };
 
-use crate::components::consensus::tests::utils::{ALICE_PUBLIC_KEY, ALICE_SECRET_KEY};
+use crate::{
+    components::consensus::tests::utils::ALICE_PUBLIC_KEY, consensus::tests::utils::ALICE_SIGNER,
+};
 
 use super::*;
 
@@ -177,7 +179,7 @@ fn register_era_validator_weights() {
     );
     let latest_timestamp = builder.last_progress;
 
-    let mut validator_matrix = ValidatorMatrix::new_with_validator(ALICE_SECRET_KEY.clone());
+    let mut validator_matrix = ValidatorMatrix::new_with_validator(ALICE_SIGNER.clone());
 
     thread::sleep(Duration::from_millis(5));
     // Register default era (0). We have no information in the builder to
@@ -242,8 +244,9 @@ fn register_executable_block() {
         block.height(),
         block.era_id(),
         chain_name_hash,
-        &ALICE_SECRET_KEY,
-    );
+        &**ALICE_SIGNER,
+    )
+    .expect("should create finality signature");
     assert_eq!(
         signature_acquisition.apply_signature(sig.into(), &weights),
         Acceptance::NeededIt
@@ -318,8 +321,9 @@ fn register_block_execution() {
         block.height(),
         block.era_id(),
         chain_name_hash,
-        &ALICE_SECRET_KEY,
-    );
+        &**ALICE_SIGNER,
+    )
+    .expect("should create finality signature");
     assert_eq!(
         signature_acquisition.apply_signature(sig.into(), &weights),
         Acceptance::NeededIt
@@ -401,8 +405,9 @@ fn register_block_executed() {
         block.height(),
         block.era_id(),
         chain_name_hash,
-        &ALICE_SECRET_KEY,
-    );
+        &**ALICE_SIGNER,
+    )
+    .expect("should create finality signature");
     assert_eq!(
         signature_acquisition.apply_signature(sig.into(), &weights),
         Acceptance::NeededIt
@@ -475,8 +480,9 @@ fn register_block_marked_complete() {
         block.height(),
         block.era_id(),
         chain_name_hash,
-        &ALICE_SECRET_KEY,
-    );
+        &**ALICE_SIGNER,
+    )
+    .expect("should create finality signature");
     assert_eq!(
         signature_acquisition.apply_signature(sig.into(), &weights),
         Acceptance::NeededIt

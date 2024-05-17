@@ -14,10 +14,10 @@ use static_assertions::const_assert;
 use tracing::info;
 
 use casper_types::{
-    BlockHeaderV2, ChainNameDigest, EraId, FinalitySignatureV2, PublicKey, SecretKey, U512,
+    BlockHeaderV2, ChainNameDigest, EraId, FinalitySignatureV2, PublicKey, SecretKey, Signer, U512,
 };
 
-use crate::consensus::signer::NodeSigner;
+use super::{NodeSigner, NodeSignerError};
 
 const MAX_VALIDATOR_MATRIX_ENTRIES: usize = 6;
 const_assert!(MAX_VALIDATOR_MATRIX_ENTRIES % 2 == 0);
@@ -50,9 +50,8 @@ pub(crate) struct ValidatorMatrix {
     chainspec_activation_era: EraId,
     #[data_size(skip)]
     finality_threshold_fraction: Ratio<u64>,
-    secret_signing_key: Arc<SecretKey>,
+    signer: Arc<NodeSigner>,
     public_signing_key: PublicKey,
-    signer: NodeSigner,
     auction_delay: u64,
     retrograde_latch: Option<EraId>,
 }
@@ -63,21 +62,19 @@ impl ValidatorMatrix {
         chainspec_name_hash: ChainNameDigest,
         chainspec_validators: Option<BTreeMap<PublicKey, U512>>,
         chainspec_activation_era: EraId,
-        secret_signing_key: Arc<SecretKey>,
-        public_signing_key: PublicKey,
-        signer: NodeSigner,
+        signer: Arc<NodeSigner>,
         auction_delay: u64,
     ) -> Self {
         let inner = Arc::new(RwLock::new(BTreeMap::new()));
+        let public_signing_key = signer.public_signing_key();
         ValidatorMatrix {
             inner,
             finality_threshold_fraction,
             chainspec_name_hash,
             chainspec_validators: chainspec_validators.map(Arc::new),
             chainspec_activation_era,
-            secret_signing_key,
-            public_signing_key,
             signer,
+            public_signing_key,
             auction_delay,
             retrograde_latch: None,
         }
@@ -85,25 +82,23 @@ impl ValidatorMatrix {
 
     /// Creates a new validator matrix with just a single validator.
     #[cfg(test)]
-    pub(crate) fn new_with_validator(secret_signing_key: Arc<SecretKey>) -> Self {
-        let public_signing_key = PublicKey::from(&*secret_signing_key);
+    pub(crate) fn new_with_validator(signer: Arc<NodeSigner>) -> Self {
         let finality_threshold_fraction = Ratio::new(1, 3);
         let era_id = EraId::new(0);
+        let public_signing_key = signer.public_signing_key();
         let weights = EraValidatorWeights::new(
             era_id,
             iter::once((public_signing_key.clone(), 100.into())).collect(),
             finality_threshold_fraction,
         );
-        let signer = NodeSigner::mock(secret_signing_key.clone());
         ValidatorMatrix {
             inner: Arc::new(RwLock::new(iter::once((era_id, weights)).collect())),
             chainspec_name_hash: ChainNameDigest::from_chain_name("casper-example"),
             chainspec_validators: None,
             chainspec_activation_era: EraId::from(0),
             finality_threshold_fraction,
-            public_signing_key,
-            secret_signing_key,
             signer,
+            public_signing_key,
             auction_delay: 1,
             retrograde_latch: None,
         }
@@ -112,10 +107,9 @@ impl ValidatorMatrix {
     /// Creates a new validator matrix with multiple validators.
     #[cfg(test)]
     pub(crate) fn new_with_validators<I: IntoIterator<Item = PublicKey>>(
-        secret_signing_key: Arc<SecretKey>,
+        signer: Arc<NodeSigner>,
         public_keys: I,
     ) -> Self {
-        let public_signing_key = PublicKey::from(&*secret_signing_key);
         let finality_threshold_fraction = Ratio::new(1, 3);
         let era_id = EraId::new(0);
         let weights = EraValidatorWeights::new(
@@ -126,16 +120,15 @@ impl ValidatorMatrix {
                 .collect(),
             finality_threshold_fraction,
         );
-        let signer = NodeSigner::mock(secret_signing_key.clone());
+        let public_signing_key = signer.public_signing_key();
         ValidatorMatrix {
             inner: Arc::new(RwLock::new(iter::once((era_id, weights)).collect())),
             chainspec_name_hash: ChainNameDigest::from_chain_name("casper-example"),
             chainspec_validators: None,
             chainspec_activation_era: EraId::from(0),
             finality_threshold_fraction,
-            public_signing_key,
-            secret_signing_key,
             signer,
+            public_signing_key,
             auction_delay: 1,
             retrograde_latch: None,
         }
@@ -287,8 +280,8 @@ impl ValidatorMatrix {
         &self.public_signing_key
     }
 
-    pub(crate) fn secret_signing_key(&self) -> &Arc<SecretKey> {
-        &self.secret_signing_key
+    pub(crate) fn signer(&self) -> &Arc<NodeSigner> {
+        &self.signer
     }
 
     /// Returns whether `pub_key` is the ID of a validator in this era, or `None` if the validator
@@ -312,20 +305,20 @@ impl ValidatorMatrix {
     pub(crate) fn create_finality_signature(
         &self,
         block_header: &BlockHeaderV2,
-    ) -> Option<FinalitySignatureV2> {
+    ) -> Result<Option<FinalitySignatureV2>, NodeSignerError> {
         if self
             .is_self_validator_in_era(block_header.era_id())
             .unwrap_or(false)
         {
-            return Some(FinalitySignatureV2::create(
+            return Ok(Some(FinalitySignatureV2::create(
                 block_header.block_hash(),
                 block_header.height(),
                 block_header.era_id(),
                 self.chainspec_name_hash,
-                &self.secret_signing_key,
-            ));
+                &*self.signer,
+            )?));
         }
-        None
+        Ok(None)
     }
 
     fn read_inner(&self) -> RwLockReadGuard<BTreeMap<EraId, EraValidatorWeights>> {
@@ -479,6 +472,7 @@ mod tests {
         components::consensus::tests::utils::{
             ALICE_PUBLIC_KEY, ALICE_SECRET_KEY, BOB_PUBLIC_KEY, CAROL_PUBLIC_KEY,
         },
+        consensus::tests::utils::ALICE_SIGNER,
         types::{validator_matrix::MAX_VALIDATOR_MATRIX_ENTRIES, SignatureWeight},
     };
 
@@ -595,7 +589,7 @@ mod tests {
     #[test]
     fn register_validator_weights_pruning() {
         // Create a validator matrix and saturate it with entries.
-        let mut validator_matrix = ValidatorMatrix::new_with_validator(ALICE_SECRET_KEY.clone());
+        let mut validator_matrix = ValidatorMatrix::new_with_validator(ALICE_SIGNER.clone());
         let mut era_validator_weights = vec![validator_matrix.validator_weights(0.into()).unwrap()];
         era_validator_weights.extend(
             (1..MAX_VALIDATOR_MATRIX_ENTRIES as u64)
@@ -685,7 +679,7 @@ mod tests {
     #[test]
     fn register_validator_weights_latched_pruning() {
         // Create a validator matrix and saturate it with entries.
-        let mut validator_matrix = ValidatorMatrix::new_with_validator(ALICE_SECRET_KEY.clone());
+        let mut validator_matrix = ValidatorMatrix::new_with_validator(ALICE_SIGNER.clone());
         // Set the retrograde latch to 10 so we can register all eras lower or
         // equal to 10.
         validator_matrix.register_retrograde_latch(Some(EraId::from(10)));

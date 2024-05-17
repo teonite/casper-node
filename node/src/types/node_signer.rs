@@ -2,17 +2,21 @@ use std::sync::Arc;
 
 use casper_types::{crypto::Signer, Digest, PublicKey, SecretKey, Signature, SignerError};
 use datasize::DataSize;
+use serde::Serialize;
 use thiserror::Error;
 
 use crate::{consensus::ValidatorSecret, utils::specimen::LargestSpecimen};
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Serialize)]
 pub enum NodeSignerError {
     #[error("Failed to setup node signer")]
     SetupError,
+
+    #[error(transparent)]
+    Signer(#[from] SignerError),
 }
 
-#[derive(Clone, DataSize)]
+#[derive(DataSize)]
 pub enum NodeSigner {
     Local(LocalSigner),
     Remote(RemoteSigner),
@@ -26,16 +30,21 @@ impl NodeSigner {
 }
 
 impl Signer for NodeSigner {
-    fn public_signing_key(&self) -> Result<PublicKey, SignerError> {
-        todo!()
+    fn public_signing_key(&self) -> PublicKey {
+        match self {
+            NodeSigner::Local(local_signer) => local_signer.public_key.clone(),
+            NodeSigner::Remote(remote_signer) => {
+                unimplemented!()
+            }
+        }
     }
 
-    fn sign<T: AsRef<[u8]>>(&self, message: T) -> Result<Signature, SignerError> {
+    fn sign_bytes<T: AsRef<[u8]>>(&self, message: T) -> Result<Signature, SignerError> {
         todo!()
     }
 }
 
-impl ValidatorSecret for NodeSigner {
+impl ValidatorSecret for Arc<NodeSigner> {
     type Hash = Digest;
     type Signature = Signature;
 
@@ -54,8 +63,11 @@ impl LargestSpecimen for NodeSigner {
 }
 
 /// Signer using key files stored on local filesystem.
-#[derive(Clone, DataSize)]
-pub struct LocalSigner {}
+#[derive(DataSize)]
+pub struct LocalSigner {
+    public_key: PublicKey,
+    secret_key: SecretKey,
+}
 
 impl LocalSigner {
     pub fn new() -> Self {
@@ -65,5 +77,5 @@ impl LocalSigner {
 }
 
 /// Signer using remote HTTP signing service.
-#[derive(Clone, DataSize)]
+#[derive(DataSize)]
 pub struct RemoteSigner {}

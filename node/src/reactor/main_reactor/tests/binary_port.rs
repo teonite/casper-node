@@ -40,7 +40,7 @@ use crate::{
     testing::{
         self, filter_reactor::FilterReactor, network::TestingNetwork, ConditionCheckReactor,
     },
-    types::NodeId,
+    types::{NodeId, NodeSigner},
 };
 
 use super::{InitialStakes, TestFixture};
@@ -93,6 +93,7 @@ async fn setup() -> (
     .await;
     let chainspec_raw_bytes = ChainspecRawBytes::clone(&fixture.chainspec_raw_bytes);
     let mut rng = fixture.rng_mut().create_child();
+    let secret_signing_key = fixture.node_contexts.first().unwrap().secret_key.clone();
     let net = fixture.network_mut();
     net.settle_on(
         &mut rng,
@@ -105,11 +106,6 @@ async fn setup() -> (
         .iter()
         .next()
         .expect("should have at least one node");
-    let secret_signing_key = first_node
-        .main_reactor()
-        .validator_matrix
-        .secret_signing_key()
-        .clone();
     let highest_block = net
         .nodes()
         .iter()

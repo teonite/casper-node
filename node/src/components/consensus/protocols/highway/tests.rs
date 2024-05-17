@@ -34,6 +34,9 @@ use crate::{
     types::BlockPayload,
 };
 
+use crate::consensus::tests::utils::{
+    ALICE_SIGNER, BOB_SIGNER, CAROL_SIGNER, DAVE_SIGNER, ELLEN_SIGNER,
+};
 use consensus_environment::ConsensusEnvironment;
 
 /// Returns a new `State` with `ClContext` parameters suitable for tests.
@@ -144,9 +147,8 @@ fn send_a_wire_unit_with_too_small_a_round_exp() {
         round_exp: 0,
         endorsed: BTreeSet::new(),
     };
-    let alice_keypair: Keypair = Keypair::from(Arc::clone(&*ALICE_SECRET_KEY));
     let highway_message: HighwayMessage<ClContext> = HighwayMessage::NewVertex(Vertex::Unit(
-        SignedWireUnit::new(wunit.into_hashed(), &alice_keypair),
+        SignedWireUnit::new(wunit.into_hashed(), &ALICE_SIGNER),
     ));
     let mut highway_protocol = new_test_highway_protocol(validators, vec![]);
     let sender = *ALICE_NODE_ID;
@@ -179,9 +181,8 @@ fn send_a_valid_wire_unit() {
         round_exp: 0,
         endorsed: BTreeSet::new(),
     };
-    let alice_keypair: Keypair = Keypair::from(Arc::clone(&*ALICE_SECRET_KEY));
     let highway_message: HighwayMessage<ClContext> = HighwayMessage::NewVertex(Vertex::Unit(
-        SignedWireUnit::new(wunit.into_hashed(), &alice_keypair),
+        SignedWireUnit::new(wunit.into_hashed(), &ALICE_SIGNER),
     ));
 
     let mut highway_protocol = new_test_highway_protocol(validators, vec![]);
@@ -232,13 +233,17 @@ fn detect_doppelganger() {
         round_exp,
         endorsed: BTreeSet::new(),
     };
-    let alice_keypair: Keypair = Keypair::from(Arc::clone(&*ALICE_SECRET_KEY));
     let highway_message: HighwayMessage<ClContext> = HighwayMessage::NewVertex(Vertex::Unit(
-        SignedWireUnit::new(wunit.into_hashed(), &alice_keypair),
+        SignedWireUnit::new(wunit.into_hashed(), &ALICE_SIGNER),
     ));
     let mut highway_protocol = new_test_highway_protocol(validators, vec![]);
     // Activate ALICE as validator.
-    let _ = highway_protocol.activate_validator(ALICE_PUBLIC_KEY.clone(), alice_keypair, now, None);
+    let _ = highway_protocol.activate_validator(
+        ALICE_PUBLIC_KEY.clone(),
+        ALICE_SIGNER.clone(),
+        now,
+        None,
+    );
     assert!(highway_protocol.is_active());
     let sender = *ALICE_NODE_ID;
     let msg = SerializedMessage::from_message(&highway_message);
@@ -272,26 +277,11 @@ fn max_rounds_per_era_returns_the_correct_value_for_prod_chainspec_value() {
 #[test]
 fn no_slow_down_when_all_nodes_fast() {
     let mut validators = BTreeMap::new();
-    validators.insert(
-        ALICE_PUBLIC_KEY.clone(),
-        (Keypair::from(Arc::clone(&*ALICE_SECRET_KEY)), 100),
-    );
-    validators.insert(
-        BOB_PUBLIC_KEY.clone(),
-        (Keypair::from(Arc::clone(&*BOB_SECRET_KEY)), 100),
-    );
-    validators.insert(
-        CAROL_PUBLIC_KEY.clone(),
-        (Keypair::from(Arc::clone(&*CAROL_SECRET_KEY)), 100),
-    );
-    validators.insert(
-        DAVE_PUBLIC_KEY.clone(),
-        (Keypair::from(Arc::clone(&*DAVE_SECRET_KEY)), 100),
-    );
-    validators.insert(
-        ELLEN_PUBLIC_KEY.clone(),
-        (Keypair::from(Arc::clone(&*ELLEN_SECRET_KEY)), 100),
-    );
+    validators.insert(ALICE_PUBLIC_KEY.clone(), (ALICE_SIGNER.clone(), 100));
+    validators.insert(BOB_PUBLIC_KEY.clone(), (BOB_SIGNER.clone(), 100));
+    validators.insert(CAROL_PUBLIC_KEY.clone(), (CAROL_SIGNER.clone(), 100));
+    validators.insert(DAVE_PUBLIC_KEY.clone(), (DAVE_SIGNER.clone(), 100));
+    validators.insert(ELLEN_PUBLIC_KEY.clone(), (ELLEN_SIGNER.clone(), 100));
 
     let mut env = ConsensusEnvironment::new(validators, Default::default());
     for _ in 0..10 {
@@ -305,26 +295,11 @@ fn no_slow_down_when_all_nodes_fast() {
 #[test]
 fn slow_node_should_switch_own_round_exponent() {
     let mut validators = BTreeMap::new();
-    validators.insert(
-        ALICE_PUBLIC_KEY.clone(),
-        (Keypair::from(Arc::clone(&*ALICE_SECRET_KEY)), 100),
-    );
-    validators.insert(
-        BOB_PUBLIC_KEY.clone(),
-        (Keypair::from(Arc::clone(&*BOB_SECRET_KEY)), 100),
-    );
-    validators.insert(
-        CAROL_PUBLIC_KEY.clone(),
-        (Keypair::from(Arc::clone(&*CAROL_SECRET_KEY)), 100),
-    );
-    validators.insert(
-        DAVE_PUBLIC_KEY.clone(),
-        (Keypair::from(Arc::clone(&*DAVE_SECRET_KEY)), 100),
-    );
-    validators.insert(
-        ELLEN_PUBLIC_KEY.clone(),
-        (Keypair::from(Arc::clone(&*ELLEN_SECRET_KEY)), 100),
-    );
+    validators.insert(ALICE_PUBLIC_KEY.clone(), (ALICE_SIGNER.clone(), 100));
+    validators.insert(BOB_PUBLIC_KEY.clone(), (BOB_SIGNER.clone(), 100));
+    validators.insert(CAROL_PUBLIC_KEY.clone(), (CAROL_SIGNER.clone(), 100));
+    validators.insert(DAVE_PUBLIC_KEY.clone(), (DAVE_SIGNER.clone(), 100));
+    validators.insert(ELLEN_PUBLIC_KEY.clone(), (ELLEN_SIGNER.clone(), 100));
 
     // Alice is the tested node; it will be slow, and so it should switch to a higher round
     // exponent
@@ -343,26 +318,11 @@ fn slow_node_should_switch_own_round_exponent() {
 #[test]
 fn slow_down_when_majority_slow() {
     let mut validators = BTreeMap::new();
-    validators.insert(
-        ALICE_PUBLIC_KEY.clone(),
-        (Keypair::from(Arc::clone(&*ALICE_SECRET_KEY)), 100),
-    );
-    validators.insert(
-        BOB_PUBLIC_KEY.clone(),
-        (Keypair::from(Arc::clone(&*BOB_SECRET_KEY)), 100),
-    );
-    validators.insert(
-        CAROL_PUBLIC_KEY.clone(),
-        (Keypair::from(Arc::clone(&*CAROL_SECRET_KEY)), 100),
-    );
-    validators.insert(
-        DAVE_PUBLIC_KEY.clone(),
-        (Keypair::from(Arc::clone(&*DAVE_SECRET_KEY)), 100),
-    );
-    validators.insert(
-        ELLEN_PUBLIC_KEY.clone(),
-        (Keypair::from(Arc::clone(&*ELLEN_SECRET_KEY)), 100),
-    );
+    validators.insert(ALICE_PUBLIC_KEY.clone(), (ALICE_SIGNER.clone(), 100));
+    validators.insert(BOB_PUBLIC_KEY.clone(), (BOB_SIGNER.clone(), 100));
+    validators.insert(CAROL_PUBLIC_KEY.clone(), (CAROL_SIGNER.clone(), 100));
+    validators.insert(DAVE_PUBLIC_KEY.clone(), (DAVE_SIGNER.clone(), 100));
+    validators.insert(ELLEN_PUBLIC_KEY.clone(), (ELLEN_SIGNER.clone(), 100));
 
     // Alice is the tested node; it will be slow, and so it should switch to a higher round
     // exponent

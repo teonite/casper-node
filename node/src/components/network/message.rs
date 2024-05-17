@@ -16,6 +16,7 @@ use strum::EnumDiscriminants;
 use casper_types::testing::TestRng;
 use casper_types::{
     crypto, AsymmetricType, Chainspec, Digest, ProtocolVersion, PublicKey, SecretKey, Signature,
+    Signer,
 };
 
 use super::{counting_format::ConnectionId, health::Nonce, BincodeFormat};
@@ -29,9 +30,13 @@ use crate::{
     },
 };
 
+use crate::{
+    consensus::ValidatorSecret,
+    types::{NodeSigner, NodeSignerError},
+};
 use tracing::warn;
 
-// Additional overhead accounted for (eg. lower level networking packet encapsulation).
+// Additional overhead accounted for (e.g. lower level networking packet encapsulation).
 const NETWORK_MESSAGE_LIMIT_SAFETY_MARGIN: usize = 256;
 
 /// The default protocol version to use in absence of one in the protocol version field.
@@ -176,12 +181,15 @@ pub(crate) struct ConsensusCertificate {
 
 impl ConsensusCertificate {
     /// Creates a new consensus certificate from a connection ID and key pair.
-    pub(super) fn create(connection_id: ConnectionId, key_pair: &NodeKeyPair) -> Self {
-        let signature = key_pair.sign(connection_id.as_bytes());
-        ConsensusCertificate {
-            public_key: key_pair.public_key.clone(),
+    pub(super) fn create(
+        connection_id: ConnectionId,
+        node_signer: &Arc<NodeSigner>,
+    ) -> Result<Self, NodeSignerError> {
+        let signature = node_signer.sign_bytes(connection_id.as_bytes())?;
+        Ok(ConsensusCertificate {
+            public_key: node_signer.public_signing_key(),
             signature,
-        }
+        })
     }
 
     /// Validates a certificate, returning a `PublicKey` if valid.
@@ -194,11 +202,9 @@ impl ConsensusCertificate {
     #[cfg(test)]
     fn random(rng: &mut TestRng) -> Self {
         let secret_key = SecretKey::random(rng);
-        let public_key = PublicKey::from(&secret_key);
-        ConsensusCertificate::create(
-            ConnectionId::random(rng),
-            &NodeKeyPair::new((Arc::new(secret_key), public_key)),
-        )
+        let signer = NodeSigner::mock(secret_key);
+        ConsensusCertificate::create(ConnectionId::random(rng), &signer)
+            .expect("should create random consensus certificate")
     }
 }
 

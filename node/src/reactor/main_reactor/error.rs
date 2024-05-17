@@ -5,9 +5,10 @@ use casper_types::{bytesrepr, crypto::ErrorExt as CryptoError};
 
 use crate::{
     components::{
-        consensus::signer, contract_runtime, contract_runtime::BlockExecutionError,
-        diagnostics_port, network, storage, upgrade_watcher,
+        contract_runtime, contract_runtime::BlockExecutionError, diagnostics_port, network,
+        storage, upgrade_watcher,
     },
+    types::NodeSignerError,
     utils::{ListeningError, LoadError},
 };
 
@@ -64,7 +65,7 @@ pub(crate) enum Error {
 
     /// `NodeSigner` component error.
     #[error("node signer error: {0}")]
-    NodeSigner(#[from] signer::NodeSignerError),
+    NodeSigner(#[from] NodeSignerError),
 }
 
 impl From<bytesrepr::Error> for Error {

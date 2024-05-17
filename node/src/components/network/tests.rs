@@ -45,7 +45,7 @@ use crate::{
         network::{NetworkedReactor, Nodes, TestingNetwork},
         ConditionCheckReactor,
     },
-    types::{NodeId, ValidatorMatrix},
+    types::{NodeId, NodeSigner, ValidatorMatrix},
     NodeRng,
 };
 
@@ -198,7 +198,7 @@ impl Reactor for TestReactor {
             None,
             registry,
             ChainInfo::create_for_testing(),
-            ValidatorMatrix::new_with_validator(Arc::new(secret_key)),
+            ValidatorMatrix::new_with_validator(NodeSigner::mock(secret_key)),
         )?;
         let gossiper_config = gossiper::Config::new_with_small_timeouts();
         let address_gossiper = Gossiper::<{ GossipedAddress::ID_IS_COMPLETE_ITEM }, _>::new(

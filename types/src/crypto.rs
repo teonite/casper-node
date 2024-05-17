@@ -2,6 +2,7 @@
 
 mod asymmetric_key;
 mod error;
+mod signer;
 
 use blake2::{
     digest::{Update, VariableOutput},
@@ -20,6 +21,7 @@ pub use asymmetric_key::{
 pub use error::Error;
 #[cfg(any(feature = "std", test))]
 pub use error::ErrorExt;
+pub use signer::{Signer, SignerError, TestSigner};
 
 #[doc(hidden)]
 pub fn blake2b<T: AsRef<[u8]>>(data: T) -> [u8; BLAKE2B_DIGEST_LENGTH] {

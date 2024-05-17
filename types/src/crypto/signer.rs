@@ -1,7 +1,8 @@
-use thiserror::Error;
 use crate::{PublicKey, SecretKey, Signature};
+use serde::Serialize;
+use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Serialize)]
 pub enum SignerError {
     #[error("public key error: {0}")]
     PublicKey(String),
@@ -10,9 +11,9 @@ pub enum SignerError {
 }
 
 pub trait Signer {
-    fn public_signing_key(&self) -> Result<PublicKey, SignerError>;
+    fn public_signing_key(&self) -> PublicKey;
 
-    fn sign<T: AsRef<[u8]>>(&self, message: T) -> Result<Signature, SignerError>;
+    fn sign_bytes<T: AsRef<[u8]>>(&self, message: T) -> Result<Signature, SignerError>;
 }
 
 pub struct TestSigner {}
@@ -24,11 +25,11 @@ impl TestSigner {
 }
 
 impl Signer for TestSigner {
-    fn public_signing_key(&self) -> Result<PublicKey, SignerError> {
+    fn public_signing_key(&self) -> PublicKey {
         todo!()
     }
 
-    fn sign<T: AsRef<[u8]>>(&self, message: T) -> Result<Signature, SignerError> {
+    fn sign_bytes<T: AsRef<[u8]>>(&self, message: T) -> Result<Signature, SignerError> {
         todo!()
     }
 }

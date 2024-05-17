@@ -57,7 +57,9 @@ pub use block_v1::BlockV1;
 pub use block_v2::BlockV2;
 pub use chain_name_digest::ChainNameDigest;
 pub use era_end::{EraEnd, EraEndV1, EraEndV2, EraReport};
-pub use finality_signature::{FinalitySignature, FinalitySignatureV1, FinalitySignatureV2};
+pub use finality_signature::{
+    FinalitySignature, FinalitySignatureError, FinalitySignatureV1, FinalitySignatureV2,
+};
 pub use finality_signature_id::FinalitySignatureId;
 #[cfg(all(feature = "std", feature = "json-schema"))]
 pub use json_compatibility::JsonBlockWithSignatures;

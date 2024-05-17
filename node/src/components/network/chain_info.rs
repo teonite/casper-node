@@ -3,8 +3,9 @@
 // TODO: This module and `ChainId` should disappear in its entirety and the actual chainspec be made
 // available.
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
+use crate::types::{NodeSigner, NodeSignerError};
 use casper_types::{Chainspec, Digest, ProtocolVersion};
 use datasize::DataSize;
 
@@ -47,19 +48,22 @@ impl ChainInfo {
     pub(super) fn create_handshake<P>(
         &self,
         public_addr: SocketAddr,
-        consensus_keys: Option<&NodeKeyPair>,
+        node_signer: Option<&Arc<NodeSigner>>,
         connection_id: ConnectionId,
         is_syncing: bool,
-    ) -> Message<P> {
-        Message::Handshake {
+    ) -> Result<Message<P>, NodeSignerError> {
+        let consensus_certificate = match node_signer {
+            None => None,
+            Some(signer) => Some(ConsensusCertificate::create(connection_id, signer)?),
+        };
+        Ok(Message::Handshake {
             network_name: self.network_name.clone(),
             public_addr,
             protocol_version: self.protocol_version,
-            consensus_certificate: consensus_keys
-                .map(|key_pair| ConsensusCertificate::create(connection_id, key_pair)),
+            consensus_certificate,
             is_syncing,
             chainspec_hash: Some(self.chainspec_hash),
-        }
+        })
     }
 }
 

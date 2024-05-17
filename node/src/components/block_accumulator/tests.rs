@@ -30,13 +30,14 @@ use crate::{
         network::Identity as NetworkIdentity,
         storage::{self, Storage},
     },
+    consensus::tests::utils::{ALICE_SIGNER, BOB_SIGNER, CAROL_SIGNER},
     effect::{
         announcements::ControlAnnouncement,
         requests::{ContractRuntimeRequest, MarkBlockCompletedRequest, NetworkRequest},
     },
     protocol::Message,
     reactor::{self, EventQueueHandle, QueueKind, Reactor, Runner, TryCrankOutcome},
-    types::EraValidatorWeights,
+    types::{EraValidatorWeights, NodeSigner},
     utils::{Loadable, WithDir},
     NodeRng,
 };
@@ -173,7 +174,7 @@ impl Reactor for MockReactor {
     ) -> Result<(Self, Effects<Self::Event>), Self::Error> {
         let (storage_config, storage_tempdir) = storage::Config::new_for_tests(1);
         let storage_withdir = WithDir::new(storage_tempdir.path(), storage_config);
-        let validator_matrix = ValidatorMatrix::new_with_validator(ALICE_SECRET_KEY.clone());
+        let validator_matrix = ValidatorMatrix::new_with_validator(ALICE_SIGNER.clone());
         let block_accumulator_config = Config::default();
         let block_time = block_accumulator_config.purge_interval / 2;
 
@@ -291,7 +292,7 @@ fn upsert_acceptor() {
     let mut rng = TestRng::new();
     let config = Config::default();
     let era0 = EraId::from(0);
-    let validator_matrix = ValidatorMatrix::new_with_validator(ALICE_SECRET_KEY.clone());
+    let validator_matrix = ValidatorMatrix::new_with_validator(ALICE_SIGNER.clone());
     let recent_era_interval = 1;
     let block_time = config.purge_interval / 2;
     let metrics_registry = Registry::new();
@@ -667,20 +668,23 @@ fn acceptor_should_store_block() {
     let mut meta_block = meta_block_with_default_state(block.clone());
     let mut acceptor = BlockAcceptor::new(*block.hash(), vec![]);
 
-    // Create 4 pairs of keys so we can later create 4 signatures.
-    let keys: Vec<(SecretKey, PublicKey)> = (0..4)
+    // Create 4 pairs of keys, so we can later create 4 signatures.
+    let signers: Vec<(Arc<NodeSigner>, PublicKey)> = (0..4)
         .into_iter()
-        .map(|_| generate_ed25519_keypair())
+        .map(|_| {
+            let (secret_key, public_key) = generate_ed25519_keypair();
+            (NodeSigner::mock(secret_key), public_key)
+        })
         .collect();
     // Register the keys into the era validator weights, front loaded on the
     // first 2 with 80% weight.
     let era_validator_weights = EraValidatorWeights::new(
         block.era_id(),
         BTreeMap::from([
-            (keys[0].1.clone(), U512::from(40)),
-            (keys[1].1.clone(), U512::from(40)),
-            (keys[2].1.clone(), U512::from(10)),
-            (keys[3].1.clone(), U512::from(10)),
+            (signers[0].1.clone(), U512::from(40)),
+            (signers[1].1.clone(), U512::from(40)),
+            (signers[2].1.clone(), U512::from(10)),
+            (signers[3].1.clone(), U512::from(10)),
         ]),
         Ratio::new(1, 3),
     );
@@ -714,8 +718,9 @@ fn acceptor_should_store_block() {
         block.height(),
         block.era_id(),
         chain_name_hash,
-        &keys[0].0,
-    );
+        &*signers[0].0,
+    )
+    .expect("should create finality signature");
     signatures.push(fin_sig.clone());
     // First signature with 40% weight brings the block to weak finality.
     acceptor
@@ -737,8 +742,9 @@ fn acceptor_should_store_block() {
         block.height(),
         block.era_id(),
         chain_name_hash,
-        &keys[2].0,
-    );
+        &*signers[2].0,
+    )
+    .expect("should create finality signature");
     // The third signature with weight 10% doesn't make the block go to
     // strict finality.
     signatures.push(fin_sig.clone());
@@ -751,14 +757,16 @@ fn acceptor_should_store_block() {
 
     // Create a bogus signature from a non-validator for this era.
     let non_validator_keys = generate_ed25519_keypair();
+    let non_validator_signer = NodeSigner::mock(non_validator_keys.0.into());
     let faulty_peer = NodeId::random(&mut rng);
     let bogus_sig = FinalitySignatureV2::create(
         *block.hash(),
         block.height(),
         block.era_id(),
         chain_name_hash,
-        &non_validator_keys.0,
-    );
+        &*non_validator_signer,
+    )
+    .expect("should create finality signature");
     acceptor
         .register_finality_signature(bogus_sig, Some(faulty_peer), VALIDATOR_SLOTS)
         .unwrap();
@@ -775,8 +783,9 @@ fn acceptor_should_store_block() {
         block.height(),
         block.era_id(),
         chain_name_hash,
-        &keys[1].0,
-    );
+        &*signers[1].0,
+    )
+    .expect("should create finality signature");
     signatures.push(fin_sig.clone());
     // Second signature with 40% weight brings the block to strict finality.
     acceptor
@@ -804,8 +813,9 @@ fn acceptor_should_store_block() {
         block.height(),
         block.era_id(),
         chain_name_hash,
-        &keys[3].0,
-    );
+        &*signers[3].0,
+    )
+    .expect("should create finality signature");
     // Already have sufficient finality signatures, so we're not supposed to
     // store anything else.
     acceptor
@@ -916,7 +926,7 @@ fn acceptor_signatures_bound_should_not_be_triggered_if_peers_are_different() {
 #[test]
 fn accumulator_should_leap() {
     let mut rng = TestRng::new();
-    let mut validator_matrix = ValidatorMatrix::new_with_validator(ALICE_SECRET_KEY.clone());
+    let mut validator_matrix = ValidatorMatrix::new_with_validator(ALICE_SIGNER.clone());
     let block_accumulator_config = Config::default();
     let recent_era_interval = 1;
     let block_time = block_accumulator_config.purge_interval / 2;
@@ -1096,8 +1106,9 @@ fn block_acceptor(block: BlockV2, chain_name_hash: ChainNameDigest) -> BlockAcce
                 block.height(),
                 block.era_id(),
                 chain_name_hash,
-                &ALICE_SECRET_KEY,
-            ),
+                &**ALICE_SIGNER,
+            )
+            .expect("should create finality signature"),
             None,
             VALIDATOR_SLOTS,
         )
@@ -1118,7 +1129,7 @@ fn block_acceptor(block: BlockV2, chain_name_hash: ChainNameDigest) -> BlockAcce
 #[test]
 fn accumulator_purge() {
     let mut rng = TestRng::new();
-    let mut validator_matrix = ValidatorMatrix::new_with_validator(ALICE_SECRET_KEY.clone());
+    let mut validator_matrix = ValidatorMatrix::new_with_validator(ALICE_SIGNER.clone());
     let block_accumulator_config = Config::default();
     let recent_era_interval = 1;
     let block_time = block_accumulator_config.purge_interval / 2;
@@ -1152,24 +1163,27 @@ fn accumulator_purge() {
         block_1.height(),
         block_1.era_id(),
         chain_name_hash,
-        &ALICE_SECRET_KEY,
-    );
+        &**ALICE_SIGNER,
+    )
+    .expect("should create finality signature");
     // One finality signature from our only validator for block 2.
     let fin_sig_2 = FinalitySignatureV2::create(
         *block_2.hash(),
         block_2.height(),
         block_2.era_id(),
         chain_name_hash,
-        &ALICE_SECRET_KEY,
-    );
+        &**ALICE_SIGNER,
+    )
+    .expect("should create finality signature");
     // One finality signature from our only validator for block 3.
     let fin_sig_3 = FinalitySignatureV2::create(
         *block_3.hash(),
         block_3.height(),
         block_3.era_id(),
         chain_name_hash,
-        &ALICE_SECRET_KEY,
-    );
+        &**ALICE_SIGNER,
+    )
+    .expect("should create finality signature");
 
     // Register the eras in the validator matrix so the blocks are valid.
     {
@@ -1333,8 +1347,9 @@ fn accumulator_purge() {
         in_range_block.height(),
         in_range_block.era_id(),
         chain_name_hash,
-        &ALICE_SECRET_KEY,
-    );
+        &**ALICE_SIGNER,
+    )
+    .expect("should create finality signature");
 
     {
         // Insert the in range block with sufficient finality.
@@ -1372,8 +1387,9 @@ fn accumulator_purge() {
         out_of_range_block.height(),
         out_of_range_block.era_id(),
         chain_name_hash,
-        &ALICE_SECRET_KEY,
-    );
+        &**ALICE_SIGNER,
+    )
+    .expect("should create finality signature");
 
     {
         // Insert the out of range block with sufficient finality.
@@ -1457,8 +1473,9 @@ fn accumulator_purge() {
         future_block.height(),
         future_block.era_id(),
         chain_name_hash,
-        &ALICE_SECRET_KEY,
-    );
+        &**ALICE_SIGNER,
+    )
+    .expect("should create finality signature");
 
     {
         // Insert the future block with sufficient finality.
@@ -1497,8 +1514,9 @@ fn accumulator_purge() {
         future_unsigned_block.height(),
         future_unsigned_block.era_id(),
         chain_name_hash,
-        &ALICE_SECRET_KEY,
-    );
+        &**ALICE_SIGNER,
+    )
+    .expect("should create finality signature");
 
     {
         // Insert the future unsigned block without sufficient finality.
@@ -1642,16 +1660,18 @@ async fn block_accumulator_reactor_flow() {
         block_1.height(),
         block_1.era_id(),
         chain_name_hash,
-        &ALICE_SECRET_KEY,
-    );
+        &**ALICE_SIGNER,
+    )
+    .expect("should create finality signature");
     // One finality signature from our only validator for block 2.
     let fin_sig_2 = FinalitySignatureV2::create(
         *block_2.hash(),
         block_2.height(),
         block_2.era_id(),
         chain_name_hash,
-        &ALICE_SECRET_KEY,
-    );
+        &**ALICE_SIGNER,
+    )
+    .expect("should create finality signature");
 
     // Register the eras in the validator matrix so the blocks are valid.
     {
@@ -1937,8 +1957,9 @@ async fn block_accumulator_reactor_flow() {
         older_block.height(),
         older_block.era_id(),
         chain_name_hash,
-        &ALICE_SECRET_KEY,
-    );
+        &**ALICE_SIGNER,
+    )
+    .expect("should create finality signature");
     // Register a signature for an older block.
     {
         let effect_builder = runner.effect_builder();
@@ -1971,8 +1992,9 @@ async fn block_accumulator_reactor_flow() {
         old_era_block.height(),
         old_era_block.era_id(),
         chain_name_hash,
-        &ALICE_SECRET_KEY,
-    );
+        &**ALICE_SIGNER,
+    )
+    .expect("should create finality signature");
     // Register a signature for a block in an old era.
     {
         let effect_builder = runner.effect_builder();
@@ -2020,24 +2042,27 @@ async fn block_accumulator_doesnt_purge_with_delayed_block_execution() {
         block_1.height(),
         block_1.era_id(),
         chain_name_hash,
-        &BOB_SECRET_KEY,
-    );
+        &**BOB_SIGNER,
+    )
+    .expect("should create finality signature");
 
     let fin_sig_carol = FinalitySignatureV2::create(
         *block_1.hash(),
         block_1.height(),
         block_1.era_id(),
         chain_name_hash,
-        &CAROL_SECRET_KEY,
-    );
+        &**CAROL_SIGNER,
+    )
+    .expect("should create finality signature");
 
     let fin_sig_alice = FinalitySignatureV2::create(
         *block_1.hash(),
         block_1.height(),
         block_1.era_id(),
         chain_name_hash,
-        &ALICE_SECRET_KEY,
-    );
+        &**ALICE_SIGNER,
+    )
+    .expect("should create finality signature");
 
     // Register the era in the validator matrix so the block is valid.
     {

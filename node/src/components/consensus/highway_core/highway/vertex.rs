@@ -318,11 +318,8 @@ where
 }
 
 impl<C: Context> SignedWireUnit<C> {
-    pub(crate) fn new(
-        hashed_wire_unit: HashedWireUnit<C>,
-        secret_key: &C::ValidatorSecret,
-    ) -> Self {
-        let signature = secret_key.sign(&hashed_wire_unit.hash);
+    pub(crate) fn new(hashed_wire_unit: HashedWireUnit<C>, secret: &C::ValidatorSecret) -> Self {
+        let signature = secret.sign(&hashed_wire_unit.hash);
         SignedWireUnit {
             hashed_wire_unit,
             signature,
