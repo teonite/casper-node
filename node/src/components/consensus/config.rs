@@ -52,16 +52,24 @@ impl Config {
     /// Loads the secret key from the configuration file and derives the public key.
     pub(crate) fn load_keys<P: AsRef<Path>>(
         &self,
-        root: P,
+        root_dir: P,
     ) -> Result<(SecretKey, PublicKey), LoadKeyError> {
-        let secret_signing_key: SecretKey = self.secret_key_path.clone().load(root)?;
+        let secret_signing_key: SecretKey = self.secret_key_path.clone().load(root_dir)?;
         let public_key: PublicKey = PublicKey::from(&secret_signing_key);
         Ok((secret_signing_key, public_key))
     }
 
     /// Creates a local or remote signer based on configuration file.
-    pub(crate) fn setup_signer(&self) -> Result<Arc<NodeSigner>, NodeSignerError> {
-        unimplemented!()
+    pub(crate) fn setup_signer<P: AsRef<Path>>(
+        &self,
+        root_dir: P,
+    ) -> Result<Arc<NodeSigner>, NodeSignerError> {
+        // FIXME: implement full setup after configuration file update; currently always creates
+        // local signer
+        let (secret_key, public_key) = self
+            .load_keys(root_dir)
+            .map_err(NodeSignerError::LoadKeyError)?;
+        Ok(NodeSigner::local(secret_key, public_key))
     }
 }
 

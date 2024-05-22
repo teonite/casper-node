@@ -41,7 +41,7 @@ use casper_types::{
 use crate::{
     components::{
         consensus::{
-            cl_context::{ClContext, Keypair},
+            cl_context::ClContext,
             consensus_protocol::{
                 ConsensusProtocol, FinalizedBlock as CpFinalizedBlock, ProposedBlock,
                 ProtocolOutcome,

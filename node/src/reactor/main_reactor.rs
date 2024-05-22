@@ -1086,8 +1086,7 @@ impl reactor::Reactor for MainReactor {
 
         let trusted_hash = config.value().node.trusted_hash;
         let (root_dir, config) = config.into_parts();
-        let (_our_secret_key, our_public_key) = config.consensus.load_keys(&root_dir)?;
-        let signer = config.consensus.setup_signer()?;
+        let signer = config.consensus.setup_signer(&root_dir)?;
         let validator_matrix = ValidatorMatrix::new(
             chainspec.core_config.finality_threshold_fraction,
             chainspec.name_hash(),

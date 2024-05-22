@@ -12,12 +12,11 @@ use serde::{
 };
 use strum::EnumDiscriminants;
 
-#[cfg(test)]
-use casper_types::testing::TestRng;
 use casper_types::{
-    crypto, AsymmetricType, Chainspec, Digest, ProtocolVersion, PublicKey, SecretKey, Signature,
-    Signer,
+    crypto, AsymmetricType, Chainspec, Digest, ProtocolVersion, PublicKey, Signature, Signer,
 };
+#[cfg(test)]
+use casper_types::{testing::TestRng, SecretKey};
 
 use super::{counting_format::ConnectionId, health::Nonce, BincodeFormat};
 use crate::{
@@ -30,10 +29,7 @@ use crate::{
     },
 };
 
-use crate::{
-    consensus::ValidatorSecret,
-    types::{NodeSigner, NodeSignerError},
-};
+use crate::types::{NodeSigner, NodeSignerError};
 use tracing::warn;
 
 // Additional overhead accounted for (e.g. lower level networking packet encapsulation).
@@ -144,27 +140,6 @@ impl<P: Payload> Message<P> {
                     .map_err(|err| Message::Payload(err).into())
             }
         }
-    }
-}
-
-/// A pair of secret keys used by consensus.
-pub(super) struct NodeKeyPair {
-    secret_key: Arc<SecretKey>,
-    public_key: PublicKey,
-}
-
-impl NodeKeyPair {
-    /// Creates a new key pair for consensus signing.
-    pub(super) fn new(key_pair: (Arc<SecretKey>, PublicKey)) -> Self {
-        Self {
-            secret_key: key_pair.0,
-            public_key: key_pair.1,
-        }
-    }
-
-    /// Sign a value using this keypair.
-    fn sign<T: AsRef<[u8]>>(&self, value: T) -> Signature {
-        crypto::sign(value, &self.secret_key, &self.public_key)
     }
 }
 

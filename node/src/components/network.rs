@@ -74,7 +74,7 @@ use tokio_openssl::SslStream;
 use tokio_util::codec::LengthDelimitedCodec;
 use tracing::{debug, error, info, trace, warn, Instrument, Span};
 
-use casper_types::{EraId, PublicKey, SecretKey};
+use casper_types::EraId;
 
 pub(crate) use self::{
     bincode_format::BincodeFormat,
@@ -97,7 +97,6 @@ use self::{
     event::{IncomingConnection, OutgoingConnection},
     health::{HealthConfig, TaggedTimestamp},
     limiter::Limiter,
-    message::NodeKeyPair,
     metrics::Metrics,
     outgoing::{DialOutcome, DialRequest, OutgoingConfig, OutgoingManager},
     symmetry::ConnectionSymmetry,

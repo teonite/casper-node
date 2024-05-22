@@ -48,7 +48,6 @@ use super::{
     event::{IncomingConnection, OutgoingConnection},
     full_transport,
     limiter::LimiterHandle,
-    message::NodeKeyPair,
     message_pack_format::MessagePackFormat,
     EstimatorWeights, Event, FramedTransport, FullTransport, Identity, Message, Metrics, Payload,
     Transport,
@@ -469,12 +468,15 @@ where
     let mut encoder = MessagePackFormat;
 
     // Manually encode a handshake.
-    let handshake_message = context.chain_info.create_handshake::<P>(
-        context.public_addr.expect("component not initialized"),
-        context.node_signer.as_ref(),
-        connection_id,
-        context.is_syncing.load(Ordering::SeqCst),
-    );
+    let handshake_message = context
+        .chain_info
+        .create_handshake::<P>(
+            context.public_addr.expect("component not initialized"),
+            context.node_signer.as_ref(),
+            connection_id,
+            context.is_syncing.load(Ordering::SeqCst),
+        )
+        .unwrap();
 
     let serialized_handshake_message = Pin::new(&mut encoder)
         .serialize(&Arc::new(handshake_message))

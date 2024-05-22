@@ -8,18 +8,17 @@ use tracing::info;
 
 use crate::{
     components::consensus::{
-        cl_context::{ClContext, Keypair},
+        cl_context::ClContext,
         config::Config,
         consensus_protocol::{ConsensusProtocol, ProtocolOutcome},
         leader_sequence,
         protocols::common,
         tests::utils::{
-            new_test_chainspec, ALICE_NODE_ID, ALICE_PUBLIC_KEY, ALICE_SECRET_KEY, BOB_PUBLIC_KEY,
-            BOB_SECRET_KEY, CAROL_PUBLIC_KEY, CAROL_SECRET_KEY,
+            new_test_chainspec, ALICE_NODE_ID, ALICE_PUBLIC_KEY, ALICE_SIGNER, BOB_PUBLIC_KEY,
+            BOB_SIGNER, CAROL_PUBLIC_KEY, CAROL_SIGNER,
         },
         traits::Context,
     },
-    consensus::tests::utils::{ALICE_SIGNER, BOB_SIGNER, CAROL_SIGNER},
     testing,
     types::{BlockPayload, NodeSigner},
 };

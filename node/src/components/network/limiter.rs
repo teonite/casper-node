@@ -291,7 +291,7 @@ struct ConsumerId {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
+    use std::time::Duration;
 
     use casper_types::{ChainNameDigest, EraId, SecretKey};
     use num_rational::Ratio;
@@ -456,7 +456,6 @@ mod tests {
         let mut rng = crate::new_rng();
 
         let secret_key = SecretKey::random(&mut rng);
-        let consensus_key = PublicKey::from(&secret_key);
         let wait_metric = new_wait_time_sec();
         let signer = NodeSigner::mock(secret_key);
         let limiter = Limiter::new(

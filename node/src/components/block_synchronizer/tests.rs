@@ -25,7 +25,7 @@ use super::*;
 use crate::{
     components::{
         block_synchronizer::block_acquisition::BlockAcquisitionState,
-        consensus::tests::utils::{ALICE_PUBLIC_KEY, ALICE_SECRET_KEY},
+        consensus::tests::utils::ALICE_PUBLIC_KEY,
     },
     consensus::tests::utils::ALICE_SIGNER,
     effect::Effect,

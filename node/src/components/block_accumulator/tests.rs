@@ -17,15 +17,14 @@ use tokio::time;
 use casper_types::{
     generate_ed25519_keypair, testing::TestRng, ActivationPoint, BlockV2, ChainNameDigest,
     Chainspec, ChainspecRawBytes, FinalitySignature, FinalitySignatureV2, ProtocolVersion,
-    PublicKey, SecretKey, Signature, TestBlockBuilder, TransactionConfig, U512,
+    PublicKey, Signature, TestBlockBuilder, TransactionConfig, U512,
 };
 use reactor::ReactorEvent;
 
 use crate::{
     components::{
         consensus::tests::utils::{
-            ALICE_NODE_ID, ALICE_PUBLIC_KEY, ALICE_SECRET_KEY, BOB_NODE_ID, BOB_PUBLIC_KEY,
-            BOB_SECRET_KEY, CAROL_PUBLIC_KEY, CAROL_SECRET_KEY,
+            ALICE_NODE_ID, ALICE_PUBLIC_KEY, BOB_NODE_ID, BOB_PUBLIC_KEY, CAROL_PUBLIC_KEY,
         },
         network::Identity as NetworkIdentity,
         storage::{self, Storage},
@@ -757,7 +756,7 @@ fn acceptor_should_store_block() {
 
     // Create a bogus signature from a non-validator for this era.
     let non_validator_keys = generate_ed25519_keypair();
-    let non_validator_signer = NodeSigner::mock(non_validator_keys.0.into());
+    let non_validator_signer = NodeSigner::mock(non_validator_keys.0);
     let faulty_peer = NodeId::random(&mut rng);
     let bogus_sig = FinalitySignatureV2::create(
         *block.hash(),

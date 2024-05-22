@@ -1,35 +1,32 @@
-use crate::{PublicKey, SecretKey, Signature};
-use serde::Serialize;
-use thiserror::Error;
-
-#[derive(Debug, Error, Serialize)]
-pub enum SignerError {
-    #[error("public key error: {0}")]
-    PublicKey(String),
-    #[error("signature error: {0}")]
-    Signature(String),
-}
+use crate::{crypto, PublicKey, SecretKey, Signature};
 
 pub trait Signer {
     fn public_signing_key(&self) -> PublicKey;
 
-    fn sign_bytes<T: AsRef<[u8]>>(&self, message: T) -> Result<Signature, SignerError>;
+    fn sign_bytes<T: AsRef<[u8]>>(&self, message: T) -> Result<Signature, crypto::Error>;
 }
 
-pub struct TestSigner {}
+pub struct TestSigner {
+    public_key: PublicKey,
+    secret_key: SecretKey,
+}
 
 impl TestSigner {
     pub fn new(secret_key: SecretKey) -> Self {
-        todo!()
+        let public_key = PublicKey::from(&secret_key);
+        TestSigner {
+            public_key,
+            secret_key,
+        }
     }
 }
 
 impl Signer for TestSigner {
     fn public_signing_key(&self) -> PublicKey {
-        todo!()
+        self.public_key.clone()
     }
 
-    fn sign_bytes<T: AsRef<[u8]>>(&self, message: T) -> Result<Signature, SignerError> {
-        todo!()
+    fn sign_bytes<T: AsRef<[u8]>>(&self, message: T) -> Result<Signature, crypto::Error> {
+        Ok(crypto::sign(message, &self.secret_key, &self.public_key))
     }
 }

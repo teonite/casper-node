@@ -9,11 +9,7 @@ use crate::types::{NodeSigner, NodeSignerError};
 use casper_types::{Chainspec, Digest, ProtocolVersion};
 use datasize::DataSize;
 
-use super::{
-    counting_format::ConnectionId,
-    message::{ConsensusCertificate, NodeKeyPair},
-    Message,
-};
+use super::{counting_format::ConnectionId, message::ConsensusCertificate, Message};
 
 /// Data retained from the chainspec by the networking component.
 ///

@@ -40,7 +40,7 @@ use crate::{
     testing::{
         self, filter_reactor::FilterReactor, network::TestingNetwork, ConditionCheckReactor,
     },
-    types::{NodeId, NodeSigner},
+    types::NodeId,
 };
 
 use super::{InitialStakes, TestFixture};

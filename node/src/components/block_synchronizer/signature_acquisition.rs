@@ -231,7 +231,7 @@ mod tests {
         );
         assert_iter_equal!(signature_acquisition.have_signatures(), [public_0]);
         assert_iter_equal!(signature_acquisition.not_vacant(), [public_0]);
-        assert_eq!(signature_acquisition.have_no_vacant(), false);
+        assert!(!signature_acquisition.have_no_vacant());
         assert_iter_equal!(
             signature_acquisition.not_pending(),
             validators.iter().map(|(p, _)| p),
@@ -258,7 +258,7 @@ mod tests {
             [public_0, public_2],
         );
         assert_iter_equal!(signature_acquisition.not_vacant(), [public_0, public_2]);
-        assert_eq!(signature_acquisition.have_no_vacant(), false);
+        assert!(!signature_acquisition.have_no_vacant());
         assert_iter_equal!(
             signature_acquisition.not_pending(),
             validators.iter().map(|(p, _)| p),

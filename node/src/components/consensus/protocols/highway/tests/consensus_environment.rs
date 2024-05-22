@@ -12,7 +12,7 @@ use casper_types::{PublicKey, Timestamp};
 
 use crate::{
     components::consensus::{
-        cl_context::{ClContext, Keypair},
+        cl_context::ClContext,
         consensus_protocol::{ConsensusProtocol, FinalizedBlock, ProtocolOutcome},
         era_supervisor::debug::EraDump,
         highway_core::{

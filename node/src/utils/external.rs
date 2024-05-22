@@ -180,7 +180,7 @@ impl Loadable for SecretKey {
     type Error = crypto::ErrorExt;
 
     fn from_path<P: AsRef<Path>>(path: P) -> Result<Self, Self::Error> {
-        Ok(SecretKey::from_file(path)?)
+        SecretKey::from_file(path)
     }
 }
 

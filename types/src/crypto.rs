@@ -21,7 +21,9 @@ pub use asymmetric_key::{
 pub use error::Error;
 #[cfg(any(feature = "std", test))]
 pub use error::ErrorExt;
-pub use signer::{Signer, SignerError, TestSigner};
+pub use signer::Signer;
+#[cfg(any(feature = "testing", test))]
+pub use signer::TestSigner;
 
 #[doc(hidden)]
 pub fn blake2b<T: AsRef<[u8]>>(data: T) -> [u8; BLAKE2B_DIGEST_LENGTH] {

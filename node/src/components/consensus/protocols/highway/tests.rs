@@ -9,7 +9,7 @@ use casper_types::{testing::TestRng, PublicKey, TimeDiff, Timestamp, U512};
 
 use crate::{
     components::consensus::{
-        cl_context::{ClContext, Keypair},
+        cl_context::ClContext,
         config::Config,
         consensus_protocol::{ConsensusProtocol, ProtocolOutcome},
         highway_core::{
@@ -23,9 +23,8 @@ use crate::{
             config::Config as HighwayConfig, HighwayMessage, HighwayProtocol, ACTION_ID_VERTEX,
         },
         tests::utils::{
-            new_test_chainspec, ALICE_NODE_ID, ALICE_PUBLIC_KEY, ALICE_SECRET_KEY, BOB_PUBLIC_KEY,
-            BOB_SECRET_KEY, CAROL_PUBLIC_KEY, CAROL_SECRET_KEY, DAVE_PUBLIC_KEY, DAVE_SECRET_KEY,
-            ELLEN_PUBLIC_KEY, ELLEN_SECRET_KEY,
+            new_test_chainspec, ALICE_NODE_ID, ALICE_PUBLIC_KEY, BOB_PUBLIC_KEY, CAROL_PUBLIC_KEY,
+            DAVE_PUBLIC_KEY, ELLEN_PUBLIC_KEY,
         },
         traits::Context,
         utils::{ValidatorIndex, Weight},

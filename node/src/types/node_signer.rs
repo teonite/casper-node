@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
-use casper_types::{crypto::Signer, Digest, PublicKey, SecretKey, Signature, SignerError};
+use casper_types::{crypto, crypto::Signer, Digest, ErrorExt, PublicKey, SecretKey, Signature};
 use datasize::DataSize;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::{consensus::ValidatorSecret, utils::specimen::LargestSpecimen};
+use crate::{
+    consensus::ValidatorSecret,
+    utils::{specimen::LargestSpecimen, LoadError},
+};
 
 #[derive(Error, Debug, Serialize)]
 pub enum NodeSignerError {
@@ -13,7 +16,14 @@ pub enum NodeSignerError {
     SetupError,
 
     #[error(transparent)]
-    Signer(#[from] SignerError),
+    Crypto(#[from] crypto::Error),
+
+    #[error("Failed to load private key from file")]
+    LoadKeyError(
+        #[serde(skip_serializing)]
+        #[source]
+        LoadError<ErrorExt>,
+    ),
 }
 
 #[derive(DataSize)]
@@ -25,7 +35,14 @@ pub enum NodeSigner {
 impl NodeSigner {
     /// Creates a local signer for `MockReactor`.
     pub fn mock(secret_key: SecretKey) -> Arc<Self> {
-        todo!()
+        let public_key = PublicKey::from(&secret_key);
+        Self::local(secret_key, public_key)
+    }
+
+    /// Creates an instance of local node signer.
+    pub fn local(secret_key: SecretKey, public_key: PublicKey) -> Arc<Self> {
+        let local_signer = LocalSigner::new(secret_key, public_key);
+        Arc::new(Self::Local(local_signer))
     }
 }
 
@@ -33,14 +50,23 @@ impl Signer for NodeSigner {
     fn public_signing_key(&self) -> PublicKey {
         match self {
             NodeSigner::Local(local_signer) => local_signer.public_key.clone(),
-            NodeSigner::Remote(remote_signer) => {
+            NodeSigner::Remote(_remote_signer) => {
                 unimplemented!()
             }
         }
     }
 
-    fn sign_bytes<T: AsRef<[u8]>>(&self, message: T) -> Result<Signature, SignerError> {
-        todo!()
+    fn sign_bytes<T: AsRef<[u8]>>(&self, message: T) -> Result<Signature, crypto::Error> {
+        match self {
+            NodeSigner::Local(local_signer) => Ok(crypto::sign(
+                message,
+                &local_signer.secret_key,
+                &local_signer.public_key,
+            )),
+            NodeSigner::Remote(_remote_signer) => {
+                unimplemented!()
+            }
+        }
     }
 }
 
@@ -49,16 +75,16 @@ impl ValidatorSecret for Arc<NodeSigner> {
     type Signature = Signature;
 
     fn sign(&self, hash: &Self::Hash) -> Self::Signature {
-        todo!()
+        self.sign_bytes(hash).unwrap()
     }
 }
 
 impl LargestSpecimen for NodeSigner {
     fn largest_specimen<E: crate::utils::specimen::SizeEstimator>(
-        estimator: &E,
-        cache: &mut crate::utils::specimen::Cache,
+        _estimator: &E,
+        _cache: &mut crate::utils::specimen::Cache,
     ) -> Self {
-        todo!()
+        unimplemented!()
     }
 }
 
@@ -70,12 +96,16 @@ pub struct LocalSigner {
 }
 
 impl LocalSigner {
-    pub fn new() -> Self {
-        // let (our_secret_key, our_public_key) = config.consensus.load_keys(&root_dir)?;
-        todo!()
+    pub fn new(secret_key: SecretKey, public_key: PublicKey) -> Self {
+        LocalSigner {
+            public_key,
+            secret_key,
+        }
     }
 }
 
 /// Signer using remote HTTP signing service.
 #[derive(DataSize)]
-pub struct RemoteSigner {}
+pub struct RemoteSigner {
+    public_key: PublicKey,
+}

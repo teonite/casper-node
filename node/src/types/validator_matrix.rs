@@ -14,7 +14,7 @@ use static_assertions::const_assert;
 use tracing::info;
 
 use casper_types::{
-    BlockHeaderV2, ChainNameDigest, EraId, FinalitySignatureV2, PublicKey, SecretKey, Signer, U512,
+    BlockHeaderV2, ChainNameDigest, EraId, FinalitySignatureV2, PublicKey, Signer, U512,
 };
 
 use super::{NodeSigner, NodeSignerError};
@@ -469,9 +469,7 @@ mod tests {
     use num_rational::Ratio;
 
     use crate::{
-        components::consensus::tests::utils::{
-            ALICE_PUBLIC_KEY, ALICE_SECRET_KEY, BOB_PUBLIC_KEY, CAROL_PUBLIC_KEY,
-        },
+        components::consensus::tests::utils::{ALICE_PUBLIC_KEY, BOB_PUBLIC_KEY, CAROL_PUBLIC_KEY},
         consensus::tests::utils::ALICE_SIGNER,
         types::{validator_matrix::MAX_VALIDATOR_MATRIX_ENTRIES, SignatureWeight},
     };

@@ -178,15 +178,12 @@ impl<C: Context> ReadWal<C> {
 mod tests {
     use std::iter::from_fn;
 
-    use crate::components::consensus::{
-        cl_context::{ClContext, Keypair},
-        protocols::common,
-    };
+    use crate::components::consensus::{cl_context::ClContext, protocols::common};
     use casper_types::{PublicKey, SecretKey, Signer, Timestamp, U512};
     use tempfile::tempdir;
 
     use super::*;
-    use crate::{consensus::tests::utils::ALICE_SIGNER, types::NodeSigner};
+    use crate::types::NodeSigner;
     use once_cell::sync::Lazy;
 
     const INSTANCE_ID_DATA: &[u8; 1] = &[123u8; 1];
