@@ -1049,9 +1049,11 @@ pub trait StateProvider {
             AuctionMethod::AddBid {
                 public_key,
                 delegation_rate,
+                whitelist_size,
                 amount,
             } => runtime
-                .add_bid(public_key, delegation_rate, amount)
+                // TODO(jck): proper whitelist_size
+                .add_bid(public_key, delegation_rate, whitelist_size, amount)
                 .map(AuctionMethodRet::UpdatedAmount)
                 .map_err(TrackingCopyError::Api),
             AuctionMethod::WithdrawBid { public_key, amount } => runtime

@@ -72,6 +72,9 @@ pub struct CoreConfig {
     /// Validator slots.
     pub validator_slots: u32,
 
+    // /// Whitelist validator slots.
+    // pub whitelist_validator_slots: u32,
+
     /// Finality threshold fraction.
     #[cfg_attr(feature = "datasize", data_size(skip))]
     pub finality_threshold_fraction: Ratio<u64>,
@@ -206,6 +209,7 @@ impl CoreConfig {
         let minimum_era_height = rng.gen_range(5..100);
         let minimum_block_time = TimeDiff::from_seconds(rng.gen_range(1..60));
         let validator_slots = rng.gen_range(1..10_000);
+        // let whitelist_validator_slots = rng.gen_range(1..10_000);
         let finality_threshold_fraction = Ratio::new(rng.gen_range(1..100), 100);
         let start_protocol_version_with_strict_finality_signatures_required =
             ProtocolVersion::from_parts(1, rng.gen_range(5..10), rng.gen_range(0..100));

@@ -827,9 +827,10 @@ where
                 let account_hash = Self::get_named_argument(runtime_args, auction::ARG_PUBLIC_KEY)?;
                 let delegation_rate =
                     Self::get_named_argument(runtime_args, auction::ARG_DELEGATION_RATE)?;
+                let whitelist_size = Self::get_named_argument(runtime_args, auction::ARG_WHITELIST_SIZE)?;
                 let amount = Self::get_named_argument(runtime_args, auction::ARG_AMOUNT)?;
                 let result = runtime
-                    .add_bid(account_hash, delegation_rate, amount)
+                    .add_bid(account_hash, delegation_rate, whitelist_size, amount)
                     .map_err(Self::reverter)?;
 
                 CLValue::from_t(result).map_err(Self::reverter)

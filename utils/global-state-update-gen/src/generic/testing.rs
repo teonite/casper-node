@@ -88,6 +88,8 @@ impl MockStateReader {
         for (public_key, balance, validator_cfg) in validators {
             let stake = validator_cfg.bonded_amount;
             let delegation_rate = validator_cfg.delegation_rate.unwrap_or_default();
+            // TODO(jck): proper whitelist_size
+            let whitelist_size = 0;
             let delegators = validator_cfg.delegators_map().unwrap_or_default();
             // add an entry to the recipients snapshot
             let recipient = SeigniorageRecipient::new(stake, delegation_rate, delegators.clone());
@@ -126,8 +128,13 @@ impl MockStateReader {
                 self.bids.push(BidKind::Delegator(Box::new(delegator)));
             }
 
-            let validator_bid =
-                ValidatorBid::unlocked(public_key.clone(), bonding_purse, stake, delegation_rate);
+            let validator_bid = ValidatorBid::unlocked(
+                public_key.clone(),
+                bonding_purse,
+                stake,
+                delegation_rate,
+                whitelist_size,
+            );
 
             self.bids.push(BidKind::Validator(Box::new(validator_bid)));
         }
@@ -535,6 +542,7 @@ fn should_change_one_validator() {
         bid_purse,
         validator3_new_staked,
         Default::default(),
+        Default::default(),
     );
     update.assert_written_bid(account3_hash, BidKind::Validator(Box::new(expected_bid)));
 
@@ -622,8 +630,13 @@ fn should_change_only_stake_of_one_validator() {
     update.assert_written_balance(bid_purse, 104);
 
     // check bid overwrite
-    let expected_bid =
-        ValidatorBid::unlocked(validator3, bid_purse, U512::from(104), Default::default());
+    let expected_bid = ValidatorBid::unlocked(
+        validator3,
+        bid_purse,
+        U512::from(104),
+        Default::default(),
+        Default::default(),
+    );
     update.assert_written_bid(account3_hash, BidKind::Validator(Box::new(expected_bid)));
 
     // 4 keys should be written:
@@ -757,8 +770,13 @@ fn should_replace_one_validator() {
 
     // check bid overwrite
     let account1_hash = validator1.to_account_hash();
-    let mut expected_bid_1 =
-        ValidatorBid::unlocked(validator1, bid_purse, U512::zero(), Default::default());
+    let mut expected_bid_1 = ValidatorBid::unlocked(
+        validator1,
+        bid_purse,
+        U512::zero(),
+        Default::default(),
+        Default::default(),
+    );
     expected_bid_1.deactivate();
     update.assert_written_bid(account1_hash, BidKind::Validator(Box::new(expected_bid_1)));
 
@@ -857,8 +875,13 @@ fn should_replace_one_validator_with_unbonding() {
 
     // check bid overwrite
     let account1_hash = validator1.to_account_hash();
-    let mut expected_bid_1 =
-        ValidatorBid::unlocked(validator1, bid_purse, U512::zero(), Default::default());
+    let mut expected_bid_1 = ValidatorBid::unlocked(
+        validator1,
+        bid_purse,
+        U512::zero(),
+        Default::default(),
+        Default::default(),
+    );
     expected_bid_1.deactivate();
     update.assert_written_bid(account1_hash, BidKind::Validator(Box::new(expected_bid_1)));
 
@@ -1970,8 +1993,13 @@ fn should_handle_unbonding_to_oneself_correctly() {
 
     // Check bid overwrite
     let account1_hash = old_validator.to_account_hash();
-    let mut expected_bid_1 =
-        ValidatorBid::unlocked(old_validator, bid_purse, U512::zero(), Default::default());
+    let mut expected_bid_1 = ValidatorBid::unlocked(
+        old_validator,
+        bid_purse,
+        U512::zero(),
+        Default::default(),
+        Default::default(),
+    );
     expected_bid_1.deactivate();
     update.assert_written_bid(account1_hash, BidKind::Validator(Box::new(expected_bid_1)));
 
@@ -2112,6 +2140,7 @@ fn should_handle_unbonding_to_a_delegator_correctly() {
         validator_purse,
         U512::zero(),
         Default::default(),
+        Default::default(),
     );
     expected_bid_1.deactivate();
     update.assert_written_bid(account1_hash, BidKind::Validator(Box::new(expected_bid_1)));
@@ -2233,8 +2262,13 @@ fn should_handle_legacy_unbonding_to_oneself_correctly() {
 
     // Check bid overwrite
     let account1_hash = old_validator.to_account_hash();
-    let mut expected_bid_1 =
-        ValidatorBid::unlocked(old_validator, bid_purse, U512::zero(), Default::default());
+    let mut expected_bid_1 = ValidatorBid::unlocked(
+        old_validator,
+        bid_purse,
+        U512::zero(),
+        Default::default(),
+        Default::default(),
+    );
     expected_bid_1.deactivate();
     update.assert_written_bid(account1_hash, BidKind::Validator(Box::new(expected_bid_1)));
 
@@ -2407,6 +2441,7 @@ fn should_handle_legacy_unbonding_to_a_delegator_correctly() {
         v1_public_key,
         validator_purse,
         U512::zero(),
+        Default::default(),
         Default::default(),
     );
     expected_bid_1.deactivate();

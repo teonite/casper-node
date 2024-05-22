@@ -33,7 +33,7 @@ static ERA_VALIDATORS: Lazy<EraValidators> = Lazy::new(|| {
 #[cfg(feature = "json-schema")]
 static AUCTION_INFO: Lazy<AuctionState> = Lazy::new(|| {
     use crate::{
-        system::auction::{DelegationRate, Delegator},
+        system::auction::{DelegationRate, WhitelistSize, Delegator},
         AccessRights, SecretKey, URef,
     };
     use num_traits::Zero;
@@ -49,6 +49,7 @@ static AUCTION_INFO: Lazy<AuctionState> = Lazy::new(|| {
         URef::new([250; 32], AccessRights::READ_ADD_WRITE),
         U512::from(20),
         DelegationRate::zero(),
+        WhitelistSize::zero(),
     );
     bids.push(BidKind::Validator(Box::new(validator_bid)));
 
@@ -135,6 +136,8 @@ impl AuctionState {
                         *bid.bonding_purse(),
                         *bid.staked_amount(),
                         *bid.delegation_rate(),
+                        // TODO(jck): use real value
+                        0,
                     );
                     staking.insert(public_key, (validator_bid, bid.delegators().clone()));
                 }

@@ -39,8 +39,7 @@ use crate::{
     package::{EntityVersionKey, EntityVersions, Groups, PackageStatus},
     system::{
         auction::{
-            gens::era_info_arb, Bid, BidAddr, BidKind, DelegationRate, Delegator, UnbondingPurse,
-            ValidatorBid, WithdrawPurse, DELEGATION_RATE_DENOMINATOR,
+            gens::era_info_arb, Bid, BidAddr, BidKind, DelegationRate, Delegator, UnbondingPurse, ValidatorBid, WhitelistSize, WithdrawPurse, DELEGATION_RATE_DENOMINATOR
         },
         mint::BalanceHoldAddr,
         SystemEntityType,
@@ -633,6 +632,11 @@ fn delegation_rate_arb() -> impl Strategy<Value = DelegationRate> {
     0..=DELEGATION_RATE_DENOMINATOR // Maximum, allowed value for delegation rate.
 }
 
+fn whitelist_size_arb() -> impl Strategy<Value = WhitelistSize> {
+    // TODO(jck): proper limit (chainspec.max_delegators_per_validator)
+    0u32..=1
+}
+
 pub(crate) fn unified_bid_arb(
     delegations_len: impl Into<SizeRange>,
 ) -> impl Strategy<Value = BidKind> {
@@ -690,16 +694,18 @@ pub(crate) fn validator_bid_arb() -> impl Strategy<Value = BidKind> {
         uref_arb(),
         u512_arb(),
         delegation_rate_arb(),
+        whitelist_size_arb(),
         bool::ANY,
     )
         .prop_map(
-            |(validator_public_key, bonding_purse, staked_amount, delegation_rate, is_locked)| {
+            |(validator_public_key, bonding_purse, staked_amount, delegation_rate, whitelist_size, is_locked)| {
                 let validator_bid = if is_locked {
                     ValidatorBid::locked(
                         validator_public_key,
                         bonding_purse,
                         staked_amount,
                         delegation_rate,
+                        whitelist_size,
                         1u64,
                     )
                 } else {
@@ -708,6 +714,7 @@ pub(crate) fn validator_bid_arb() -> impl Strategy<Value = BidKind> {
                         bonding_purse,
                         staked_amount,
                         delegation_rate,
+                        whitelist_size,
                     )
                 };
                 BidKind::Validator(Box::new(validator_bid))

@@ -514,6 +514,8 @@ fn create_or_update_bid<T: StateReader>(
             *bonding_purse,
             *updated_recipient.stake(),
             *updated_recipient.delegation_rate(),
+            // TODO(jck): get whitelist_size from existing bid
+            0,
         );
 
         state.set_bid(
@@ -550,6 +552,8 @@ fn create_or_update_bid<T: StateReader>(
         bonding_purse,
         stake,
         *updated_recipient.delegation_rate(),
+        // TODO(jck): proper whitelist_size
+        0,
     );
     state.set_bid(
         BidKind::Validator(Box::new(validator_bid)),

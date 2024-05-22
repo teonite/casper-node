@@ -402,6 +402,9 @@ where
                     }
                     .into());
                 }
+
+                // TODO(jck): get real whitelist_size
+                let whitelist_size = 0;
                 debug_assert_ne!(public_key, PublicKey::System);
 
                 total_staked_amount += staked_amount;
@@ -415,6 +418,7 @@ where
                         purse_uref,
                         staked_amount,
                         delegation_rate,
+                        whitelist_size,
                         release_timestamp_millis,
                     );
 

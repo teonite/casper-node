@@ -16,7 +16,7 @@ use casper_types::{
     account::AccountHash,
     system::auction::{
         BidAddr, BidKind, Bridge, DelegationRate, EraInfo, EraValidators, Error,
-        SeigniorageRecipients, UnbondingPurse, ValidatorBid, ValidatorWeights,
+        SeigniorageRecipients, UnbondingPurse, ValidatorBid, ValidatorWeights, WhitelistSize,
         DELEGATION_RATE_DENOMINATOR,
     },
     ApiError, EraId, PublicKey, U512,
@@ -69,6 +69,7 @@ pub trait Auction:
         &mut self,
         public_key: PublicKey,
         delegation_rate: DelegationRate,
+        whitelist_size: WhitelistSize,
         amount: U512,
     ) -> Result<U512, ApiError> {
         if !self.allow_auction_bids() {
@@ -85,6 +86,8 @@ pub trait Auction:
             return Err(Error::DelegationRateTooLarge.into());
         }
 
+        // TODO(jck): ensure whitelist_size <= max delegators
+
         let provided_account_hash = AccountHash::from_public_key(&public_key, |x| self.blake2b(x));
 
         if !self.is_allowed_session_caller(&provided_account_hash) {
@@ -100,11 +103,17 @@ pub trait Auction:
             }
             validator_bid.increase_stake(amount)?;
             validator_bid.with_delegation_rate(delegation_rate);
+            validator_bid.with_whitelist_size(whitelist_size);
             (*validator_bid.bonding_purse(), validator_bid)
         } else {
             let bonding_purse = self.create_purse()?;
-            let validator_bid =
-                ValidatorBid::unlocked(public_key, bonding_purse, amount, delegation_rate);
+            let validator_bid = ValidatorBid::unlocked(
+                public_key,
+                bonding_purse,
+                amount,
+                delegation_rate,
+                whitelist_size,
+            );
             (bonding_purse, Box::new(validator_bid))
         };
 

@@ -44,6 +44,9 @@ use crate::{account::AccountHash, EraId, PublicKey, U512};
 /// Representation of delegation rate of tokens. Range from 0..=100.
 pub type DelegationRate = u8;
 
+/// Representation of validator whitelist size. Range from 0..=100.
+pub type WhitelistSize = u32;
+
 /// Validators mapped to their bids.
 pub type ValidatorBids = BTreeMap<PublicKey, Box<ValidatorBid>>;
 

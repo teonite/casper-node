@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use crate::{
     bytesrepr::{self, FromBytes, ToBytes},
     system::auction::{
-        bid::VestingSchedule, DelegationRate, Error, VESTING_SCHEDULE_LENGTH_MILLIS,
+        bid::VestingSchedule, DelegationRate, WhitelistSize, Error, VESTING_SCHEDULE_LENGTH_MILLIS,
     },
     CLType, CLTyped, PublicKey, URef, U512,
 };
@@ -32,6 +32,8 @@ pub struct ValidatorBid {
     staked_amount: U512,
     /// Delegation rate
     delegation_rate: DelegationRate,
+    /// Whitelist size
+    whitelist_size: WhitelistSize,
     /// Vesting schedule for a genesis validator. `None` if non-genesis validator.
     vesting_schedule: Option<VestingSchedule>,
     /// `true` if validator has been "evicted"
@@ -45,6 +47,7 @@ impl ValidatorBid {
         bonding_purse: URef,
         staked_amount: U512,
         delegation_rate: DelegationRate,
+        whitelist_size: u32,
         release_timestamp_millis: u64,
     ) -> Self {
         let vesting_schedule = Some(VestingSchedule::new(release_timestamp_millis));
@@ -54,6 +57,7 @@ impl ValidatorBid {
             bonding_purse,
             staked_amount,
             delegation_rate,
+            whitelist_size,
             vesting_schedule,
             inactive,
         }
@@ -65,6 +69,7 @@ impl ValidatorBid {
         bonding_purse: URef,
         staked_amount: U512,
         delegation_rate: DelegationRate,
+        whitelist_size: u32,
     ) -> Self {
         let vesting_schedule = None;
         let inactive = false;
@@ -74,6 +79,7 @@ impl ValidatorBid {
             staked_amount,
             delegation_rate,
             vesting_schedule,
+            whitelist_size,
             inactive,
         }
     }
@@ -84,11 +90,13 @@ impl ValidatorBid {
         let inactive = true;
         let staked_amount = 0.into();
         let delegation_rate = Default::default();
+        let whitelist_size = 0;
         Self {
             validator_public_key,
             bonding_purse,
             staked_amount,
             delegation_rate,
+            whitelist_size,
             vesting_schedule,
             inactive,
         }
@@ -142,6 +150,11 @@ impl ValidatorBid {
     /// Gets the delegation rate of the provided bid
     pub fn delegation_rate(&self) -> &DelegationRate {
         &self.delegation_rate
+    }
+
+    /// Gets the whitelist size of the provided bid
+    pub fn whitelist_size(&self) -> &WhitelistSize {
+        &self.whitelist_size
     }
 
     /// Returns a reference to the vesting schedule of the provided bid.  `None` if a non-genesis
@@ -214,6 +227,12 @@ impl ValidatorBid {
         self
     }
 
+    /// Updates the whitelist size of the provided bid
+    pub fn with_whitelist_size(&mut self, whitelist_size: WhitelistSize) -> &mut Self {
+        self.whitelist_size = whitelist_size;
+        self
+    }
+
     /// Sets given bid's `inactive` field to `false`
     pub fn activate(&mut self) -> bool {
         self.inactive = false;
@@ -277,6 +296,7 @@ impl FromBytes for ValidatorBid {
         let (bonding_purse, bytes) = FromBytes::from_bytes(bytes)?;
         let (staked_amount, bytes) = FromBytes::from_bytes(bytes)?;
         let (delegation_rate, bytes) = FromBytes::from_bytes(bytes)?;
+        let (whitelist_size, bytes) = FromBytes::from_bytes(bytes)?;
         let (vesting_schedule, bytes) = FromBytes::from_bytes(bytes)?;
         let (inactive, bytes) = FromBytes::from_bytes(bytes)?;
         Ok((
@@ -285,6 +305,7 @@ impl FromBytes for ValidatorBid {
                 bonding_purse,
                 staked_amount,
                 delegation_rate,
+                whitelist_size,
                 vesting_schedule,
                 inactive,
             },
@@ -300,6 +321,7 @@ impl From<Bid> for ValidatorBid {
             bonding_purse: *bid.bonding_purse(),
             staked_amount: *bid.staked_amount(),
             delegation_rate: *bid.delegation_rate(),
+            whitelist_size: 0,
             vesting_schedule: bid.vesting_schedule().cloned(),
             inactive: bid.inactive(),
         }
@@ -323,6 +345,7 @@ mod tests {
             bonding_purse: URef::new([42; 32], AccessRights::READ_ADD_WRITE),
             staked_amount: U512::one(),
             delegation_rate: DelegationRate::MAX,
+            whitelist_size: 0,
             vesting_schedule: Some(VestingSchedule::default()),
             inactive: false,
         };
@@ -338,6 +361,7 @@ mod tests {
             bonding_purse: URef::new([42; 32], AccessRights::READ_ADD_WRITE),
             staked_amount: U512::one(),
             delegation_rate: DelegationRate::max_value(),
+            whitelist_size: 0,
             vesting_schedule: Some(VestingSchedule::default()),
             inactive: true,
         };
@@ -355,12 +379,14 @@ mod tests {
         let validator_bonding_purse = URef::new([42; 32], AccessRights::ADD);
         let validator_staked_amount = U512::from(1000);
         let validator_delegation_rate = 0;
+        let validator_whitelist_size = 0;
 
         let bid = ValidatorBid::locked(
             validator_pk,
             validator_bonding_purse,
             validator_staked_amount,
             validator_delegation_rate,
+            validator_whitelist_size,
             validator_release_timestamp,
         );
 

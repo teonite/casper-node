@@ -1027,6 +1027,7 @@ fn should_distribute_rewards_after_restaking_delegated_funds() {
                     public_key: VALIDATOR_1.clone(),
                     amount,
                     delegation_rate: 0,
+                    whitelist_size: 0,
                 }
             } else {
                 AuctionMethod::WithdrawBid {

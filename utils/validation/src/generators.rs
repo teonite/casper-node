@@ -120,6 +120,7 @@ pub fn make_abi_test_fixtures() -> Result<TestFixtures, Error> {
         URef::new([10; 32], AccessRights::READ_ADD_WRITE),
         U512::from(50_000_000_000u64),
         100,
+        0,
         u64::MAX,
     );
     let validator_bid_kind = BidKind::Validator(Box::new(validator_bid));

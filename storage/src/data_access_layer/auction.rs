@@ -8,7 +8,7 @@ use casper_types::{
     account::AccountHash,
     bytesrepr::FromBytes,
     execution::Effects,
-    system::{auction, auction::DelegationRate},
+    system::auction::{self, DelegationRate, WhitelistSize},
     CLTyped, CLValue, CLValueError, Chainspec, Digest, InitiatorAddr, ProtocolVersion, PublicKey,
     RuntimeArgs, TransactionEntryPoint, TransactionHash, U512,
 };
@@ -44,6 +44,7 @@ pub enum AuctionMethod {
     AddBid {
         public_key: PublicKey,
         delegation_rate: DelegationRate,
+        whitelist_size: WhitelistSize,
         amount: U512,
     },
     WithdrawBid {
@@ -112,10 +113,12 @@ impl AuctionMethod {
     fn new_add_bid(runtime_args: &RuntimeArgs) -> Result<Self, AuctionMethodError> {
         let public_key = Self::get_named_argument(runtime_args, auction::ARG_PUBLIC_KEY)?;
         let delegation_rate = Self::get_named_argument(runtime_args, auction::ARG_DELEGATION_RATE)?;
+        let whitelist_size = Self::get_named_argument(runtime_args, auction::ARG_WHITELIST_SIZE)?;
         let amount = Self::get_named_argument(runtime_args, auction::ARG_AMOUNT)?;
         Ok(Self::AddBid {
             public_key,
             delegation_rate,
+            whitelist_size,
             amount,
         })
     }
