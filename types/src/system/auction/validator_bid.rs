@@ -261,12 +261,14 @@ impl CLTyped for ValidatorBid {
 impl ToBytes for ValidatorBid {
     fn to_bytes(&self) -> Result<Vec<u8>, bytesrepr::Error> {
         let mut result = bytesrepr::allocate_buffer(self)?;
-        self.validator_public_key.write_bytes(&mut result)?;
-        self.bonding_purse.write_bytes(&mut result)?;
-        self.staked_amount.write_bytes(&mut result)?;
-        self.delegation_rate.write_bytes(&mut result)?;
-        self.vesting_schedule.write_bytes(&mut result)?;
-        self.inactive.write_bytes(&mut result)?;
+        // TODO(jck): cleanup
+        // self.validator_public_key.write_bytes(&mut result)?;
+        // self.bonding_purse.write_bytes(&mut result)?;
+        // self.staked_amount.write_bytes(&mut result)?;
+        // self.delegation_rate.write_bytes(&mut result)?;
+        // self.vesting_schedule.write_bytes(&mut result)?;
+        // self.inactive.write_bytes(&mut result)?;
+        self.write_bytes(&mut result)?;
         Ok(result)
     }
 
@@ -275,6 +277,7 @@ impl ToBytes for ValidatorBid {
             + self.bonding_purse.serialized_length()
             + self.staked_amount.serialized_length()
             + self.delegation_rate.serialized_length()
+            + self.whitelist_size.serialized_length()
             + self.vesting_schedule.serialized_length()
             + self.inactive.serialized_length()
     }
@@ -284,6 +287,8 @@ impl ToBytes for ValidatorBid {
         self.bonding_purse.write_bytes(writer)?;
         self.staked_amount.write_bytes(writer)?;
         self.delegation_rate.write_bytes(writer)?;
+        // TODO(jck): does ordering count here?
+        self.whitelist_size.write_bytes(writer)?;
         self.vesting_schedule.write_bytes(writer)?;
         self.inactive.write_bytes(writer)?;
         Ok(())
@@ -321,6 +326,7 @@ impl From<Bid> for ValidatorBid {
             bonding_purse: *bid.bonding_purse(),
             staked_amount: *bid.staked_amount(),
             delegation_rate: *bid.delegation_rate(),
+            // TODO(jck): is 0 ok?
             whitelist_size: 0,
             vesting_schedule: bid.vesting_schedule().cloned(),
             inactive: bid.inactive(),

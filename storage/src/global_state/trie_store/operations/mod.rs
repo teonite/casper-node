@@ -1085,6 +1085,7 @@ where
                         .unwrap_or_default();
                     while index < RADIX {
                         if let Some(ref pointer) = pointer_block[index] {
+                            // TODO(jck): CONTINUE: this get request returns error
                             maybe_next_trie = match self.store.get(self.txn, pointer.hash()) {
                                 Ok(trie) => trie,
                                 Err(e) => {

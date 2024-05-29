@@ -32,9 +32,10 @@ use casper_types::{
         self,
         auction::{
             self, BidsExt, DelegationRate, EraValidators, Error as AuctionError, UnbondingPurses,
-            ValidatorWeights, ARG_AMOUNT, ARG_DELEGATION_RATE, ARG_DELEGATOR, ARG_ENTRY_POINT,
-            ARG_NEW_PUBLIC_KEY, ARG_NEW_VALIDATOR, ARG_PUBLIC_KEY, ARG_REWARDS_MAP, ARG_VALIDATOR,
-            ERA_ID_KEY, INITIAL_ERA_ID, METHOD_DISTRIBUTE,
+            ValidatorWeights, WhitelistSize, ARG_AMOUNT, ARG_DELEGATION_RATE, ARG_DELEGATOR,
+            ARG_ENTRY_POINT, ARG_NEW_PUBLIC_KEY, ARG_NEW_VALIDATOR, ARG_PUBLIC_KEY,
+            ARG_REWARDS_MAP, ARG_VALIDATOR, ARG_WHITELIST_SIZE, ERA_ID_KEY, INITIAL_ERA_ID,
+            METHOD_DISTRIBUTE,
         },
     },
     EntityAddr, EraId, GenesisAccount, GenesisConfigBuilder, GenesisValidator, Key, Motes,
@@ -62,6 +63,7 @@ const BID_AMOUNT_2: u64 = 5_000;
 const ADD_BID_DELEGATION_RATE_2: DelegationRate = 15;
 const WITHDRAW_BID_AMOUNT_2: u64 = 15_000;
 const ADD_BID_DELEGATION_RATE_3: DelegationRate = 20;
+const ADD_BID_WHITELIST_SIZE: WhitelistSize = 1;
 
 const DELEGATE_AMOUNT_1: u64 = 125_000 + DEFAULT_MINIMUM_DELEGATION_AMOUNT;
 const DELEGATE_AMOUNT_2: u64 = 15_000 + DEFAULT_MINIMUM_DELEGATION_AMOUNT;
@@ -4181,6 +4183,7 @@ fn should_enforce_max_delegators_per_validator_cap_with_vips_2() {
             ARG_PUBLIC_KEY => NON_FOUNDER_VALIDATOR_1_PK.clone(),
             ARG_AMOUNT => U512::from(ADD_BID_AMOUNT_1),
             ARG_DELEGATION_RATE => ADD_BID_DELEGATION_RATE_1,
+            ARG_WHITELIST_SIZE => ADD_BID_WHITELIST_SIZE,
         },
     )
     .build();
