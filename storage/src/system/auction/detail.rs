@@ -556,7 +556,7 @@ where
 
     let validator_bid_addr = BidAddr::from(validator_public_key.clone());
     // is there such a validator?
-    let _ = read_validator_bid(provider, &validator_bid_addr.into())?;
+    let bid = read_validator_bid(provider, &validator_bid_addr.into())?;
 
     // is there already a record for this delegator?
     let delegator_bid_key =
@@ -570,7 +570,10 @@ where
     } else {
         // is this validator over the delegator limit?
         let delegator_count = provider.delegator_count(&validator_bid_addr)?;
-        if delegator_count >= max_delegators_per_validator as usize {
+        let whitelist_delegator_count = *bid.whitelist_size();
+        if delegator_count
+            >= max_delegators_per_validator as usize - whitelist_delegator_count as usize
+        {
             warn!(
                 %delegator_count, %max_delegators_per_validator,
                 "delegator_count {}, max_delegators_per_validator {}",

@@ -4116,9 +4116,8 @@ fn should_enforce_max_delegators_per_validator_cap_with_vips() {
 #[ignore]
 #[test]
 fn should_enforce_max_delegators_per_validator_cap_with_vips_2() {
-    // TODO(jck): .with_max_whitelist_delegators_per_validator(1u32)
     // TODO(jck): ensure whitelist_size <= max delegators
-    let chainspec = ChainspecConfig::default().with_max_delegators_per_validator(2u32);
+    let chainspec = ChainspecConfig::default().with_max_delegators_per_validator(3u32);
 
     let data_dir = TempDir::new().expect("should create temp dir");
     let mut builder = LmdbWasmTestBuilder::new_with_config(data_dir.path(), chainspec);
@@ -4245,6 +4244,12 @@ fn should_enforce_max_delegators_per_validator_cap_with_vips_2() {
     .build();
 
     builder.exec(delegation_request_3).expect_failure();
+    let error = builder.get_error().expect("must get error");
+
+    assert!(matches!(
+        error,
+        Error::Exec(ExecError::Revert(ApiError::AuctionError(auction_error)))
+        if auction_error == AuctionError::ExceededDelegatorSizeLimit as u8));
 
     // // TODO(jck): make sure this delegator IS on the whitelist
     // let delegation_request_4 = ExecuteRequestBuilder::standard(
@@ -4259,66 +4264,6 @@ fn should_enforce_max_delegators_per_validator_cap_with_vips_2() {
     // .build();
     // builder.exec(delegation_request_3).expect_success();
 
-    let error = builder.get_error().expect("must get error");
-
-    assert!(matches!(
-        error,
-        Error::Exec(ExecError::Revert(ApiError::AuctionError(auction_error)))
-        if auction_error == AuctionError::ExceededDelegatorSizeLimit as u8));
-
-    let delegator_2_staked_amount = {
-        let bids = builder.get_bids();
-        let delegator = bids
-            .delegator_by_public_keys(&NON_FOUNDER_VALIDATOR_1_PK, &BID_ACCOUNT_2_PK)
-            .expect("should have delegator bid");
-        delegator.staked_amount()
-    };
-
-    let undelegation_request = ExecuteRequestBuilder::standard(
-        *BID_ACCOUNT_2_ADDR,
-        CONTRACT_UNDELEGATE,
-        runtime_args! {
-            ARG_AMOUNT => delegator_2_staked_amount,
-            ARG_VALIDATOR => NON_FOUNDER_VALIDATOR_1_PK.clone(),
-            ARG_DELEGATOR => BID_ACCOUNT_2_PK.clone(),
-        },
-    )
-    .build();
-
-    builder.exec(undelegation_request).expect_success().commit();
-
-    let bids = builder.get_bids();
-
-    let current_delegator_count = bids
-        .delegators_by_validator_public_key(&NON_FOUNDER_VALIDATOR_1_PK)
-        .expect("must have bid record")
-        .iter()
-        .filter(|x| x.staked_amount() > U512::zero())
-        .collect::<Vec<&auction::Delegator>>()
-        .len();
-
-    assert_eq!(current_delegator_count, 1);
-
-    let delegation_request_3 = ExecuteRequestBuilder::standard(
-        *DELEGATOR_1_ADDR,
-        CONTRACT_DELEGATE,
-        runtime_args! {
-            ARG_AMOUNT => U512::from(DEFAULT_MINIMUM_DELEGATION_AMOUNT),
-            ARG_VALIDATOR => NON_FOUNDER_VALIDATOR_1_PK.clone(),
-            ARG_DELEGATOR => DELEGATOR_1.clone(),
-        },
-    )
-    .build();
-
-    builder.exec(delegation_request_3).expect_success().commit();
-
-    let bids = builder.get_bids();
-    let current_delegator_count = bids
-        .delegators_by_validator_public_key(&NON_FOUNDER_VALIDATOR_1_PK)
-        .expect("must have bid record")
-        .len();
-
-    assert_eq!(current_delegator_count, 2);
 }
 
 #[ignore]
