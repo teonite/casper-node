@@ -168,7 +168,7 @@ impl FinalitySignatureV2 {
             .expect("should create finality signature")
     }
 
-    fn bytes_to_sign(
+    pub fn bytes_to_sign(
         block_hash: BlockHash,
         block_height: u64,
         era_id: EraId,

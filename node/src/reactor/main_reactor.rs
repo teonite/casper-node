@@ -615,6 +615,10 @@ impl reactor::Reactor for MainReactor {
                 }
             }
 
+            MainEvent::FinalitySignatureCreated(signature) => {
+                self.handle_finality_signature_created(effect_builder, rng, signature)
+            }
+
             MainEvent::FinalitySignatureIncoming(incoming) => {
                 // Finality signature received via broadcast.
                 let sender = incoming.sender;
@@ -1442,46 +1446,11 @@ impl MainReactor {
                 .was_updated()
                 && create_finality_signatures
             {
-                // When this node is a validator in this era, sign and announce.
-                if let Some(finality_signature) = self
-                    .validator_matrix
-                    .create_finality_signature(block.header())
-                    .unwrap()
-                {
-                    debug!(
-                        %finality_signature,
-                        "MetaBlock: registering finality signature: {} {}",
-                        block.height(),
-                        block.hash(),
-                    );
-
-                    effects.extend(reactor::wrap_effects(
-                        MainEvent::Storage,
-                        effect_builder
-                            .put_finality_signature_to_storage(finality_signature.clone().into())
-                            .ignore(),
-                    ));
-
-                    effects.extend(reactor::wrap_effects(
-                        MainEvent::BlockAccumulator,
-                        self.block_accumulator.handle_event(
-                            effect_builder,
-                            rng,
-                            block_accumulator::Event::CreatedFinalitySignature {
-                                finality_signature: Box::new(finality_signature.clone()),
-                            },
-                        ),
-                    ));
-
-                    let era_id = finality_signature.era_id();
-                    let payload = Message::FinalitySignature(Box::new(finality_signature));
-                    effects.extend(reactor::wrap_effects(
-                        MainEvent::Network,
-                        effect_builder
-                            .broadcast_message_to_validators(payload, era_id)
-                            .ignore(),
-                    ));
-                }
+                // When this node is a validator in this era, request a finality signature
+                effects.extend(
+                    self.validator_matrix
+                        .create_finality_signature(block.header()),
+                );
             }
         }
 
@@ -1735,6 +1704,49 @@ impl MainReactor {
             ),
         ));
 
+        effects
+    }
+
+    fn handle_finality_signature_created(
+        &mut self,
+        effect_builder: EffectBuilder<MainEvent>,
+        rng: &mut NodeRng,
+        finality_signature: FinalitySignatureV2,
+    ) -> Effects<MainEvent> {
+        let mut effects = Effects::new();
+        debug!(
+            %finality_signature,
+            "MetaBlock: registering finality signature: {} {}",
+            finality_signature.block_height(),
+            finality_signature.block_hash(),
+        );
+
+        effects.extend(reactor::wrap_effects(
+            MainEvent::Storage,
+            effect_builder
+                .put_finality_signature_to_storage(finality_signature.clone().into())
+                .ignore(),
+        ));
+
+        effects.extend(reactor::wrap_effects(
+            MainEvent::BlockAccumulator,
+            self.block_accumulator.handle_event(
+                effect_builder,
+                rng,
+                block_accumulator::Event::CreatedFinalitySignature {
+                    finality_signature: Box::new(finality_signature.clone()),
+                },
+            ),
+        ));
+
+        let era_id = finality_signature.era_id();
+        let payload = Message::FinalitySignature(Box::new(finality_signature));
+        effects.extend(reactor::wrap_effects(
+            MainEvent::Network,
+            effect_builder
+                .broadcast_message_to_validators(payload, era_id)
+                .ignore(),
+        ));
         effects
     }
 

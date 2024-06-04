@@ -166,6 +166,8 @@ pub(crate) enum MainEvent {
     #[from]
     MarkBlockCompletedRequest(MarkBlockCompletedRequest),
     #[from]
+    FinalitySignatureCreated(FinalitySignatureV2),
+    #[from]
     FinalitySignatureIncoming(FinalitySignatureIncoming),
     #[from]
     FinalitySignatureGossiper(#[serde(skip_serializing)] gossiper::Event<FinalitySignatureV2>),
@@ -338,6 +340,7 @@ impl ReactorEvent for MainEvent {
             MainEvent::TrieRequestIncoming(_) => "TrieRequestIncoming",
             MainEvent::TrieDemand(_) => "TrieDemand",
             MainEvent::TrieResponseIncoming(_) => "TrieResponseIncoming",
+            MainEvent::FinalitySignatureCreated(_) => "FinalitySignatureCreated",
             MainEvent::FinalitySignatureIncoming(_) => "FinalitySignatureIncoming",
             MainEvent::ContractRuntime(_) => "ContractRuntime",
             MainEvent::FinalitySignatureGossiperAnnouncement(_) => {
@@ -515,6 +518,9 @@ impl Display for MainEvent {
             }
             MainEvent::FinalitySignatureFetcherAnnouncement(ann) => {
                 write!(f, "finality signature fetcher announcement: {}", ann)
+            }
+            MainEvent::FinalitySignatureCreated(sig) => {
+                write!(f, "finality signature created: {}", sig)
             }
             MainEvent::ConsensusMessageIncoming(inner) => Display::fmt(inner, f),
             MainEvent::ConsensusDemand(inner) => Display::fmt(inner, f),

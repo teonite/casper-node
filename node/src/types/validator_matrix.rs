@@ -13,6 +13,10 @@ use serde::Serialize;
 use static_assertions::const_assert;
 use tracing::info;
 
+use crate::{
+    effect::{EffectBuilder, EffectExt, Effects},
+    reactor::main_reactor::MainEvent,
+};
 use casper_types::{
     BlockHeaderV2, ChainNameDigest, EraId, FinalitySignatureV2, PublicKey, Signer, U512,
 };
@@ -305,20 +309,45 @@ impl ValidatorMatrix {
     pub(crate) fn create_finality_signature(
         &self,
         block_header: &BlockHeaderV2,
-    ) -> Result<Option<FinalitySignatureV2>, NodeSignerError> {
+    ) -> Effects<MainEvent> {
+        // ) -> Result<Option<FinalitySignatureV2>, NodeSignerError> {
+        let mut effects = Effects::new();
         if self
             .is_self_validator_in_era(block_header.era_id())
             .unwrap_or(false)
         {
-            return Ok(Some(FinalitySignatureV2::create(
+            let bytes = FinalitySignatureV2::bytes_to_sign(
                 block_header.block_hash(),
                 block_header.height(),
                 block_header.era_id(),
                 self.chainspec_name_hash,
-                &*self.signer,
-            )?));
+            );
+            let signer = self.signer().clone();
+            let block_hash = block_header.block_hash();
+            let height = block_header.height();
+            let era_id = block_header.era_id();
+            let chainspec_name_hash = self.chainspec_name_hash;
+            let public_key = signer.public_signing_key();
+            effects.extend(async move { (*signer).get_signature(bytes).await }.event(
+                move |result| match result {
+                    Ok(signature) => {
+                        let finality_signature = FinalitySignatureV2::new(
+                            block_hash,
+                            height,
+                            era_id,
+                            chainspec_name_hash,
+                            signature,
+                            public_key,
+                        );
+                        MainEvent::FinalitySignatureCreated(finality_signature)
+                    }
+                    Err(err) => {
+                        todo!()
+                    }
+                },
+            ));
         }
-        Ok(None)
+        effects
     }
 
     fn read_inner(&self) -> RwLockReadGuard<BTreeMap<EraId, EraValidatorWeights>> {

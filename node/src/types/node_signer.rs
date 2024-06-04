@@ -44,6 +44,13 @@ impl NodeSigner {
         let local_signer = LocalSigner::new(secret_key, public_key);
         Arc::new(Self::Local(local_signer))
     }
+
+    pub async fn get_signature<T: AsRef<[u8]>>(
+        &self,
+        bytes: T,
+    ) -> Result<Signature, crypto::Error> {
+        self.sign_bytes(bytes)
+    }
 }
 
 impl Signer for NodeSigner {
