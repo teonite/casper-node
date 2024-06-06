@@ -533,10 +533,9 @@ static DELEGATOR_2: Lazy<PublicKey> = Lazy::new(|| {
     let secret_key = SecretKey::ed25519_from_bytes([207; SecretKey::ED25519_LENGTH]).unwrap();
     PublicKey::from(&secret_key)
 });
-static DELEGATOR_2_ADDR: Lazy<AccountHash> = Lazy::new(|| AccountHash::from(&*DELEGATOR_2));
 
 // TODO(jck)
-fn is_on_whitelist(delegator: &PublicKey, bid: &ValidatorBid) -> bool {
+fn is_on_whitelist(delegator: &PublicKey, _bid: &ValidatorBid) -> bool {
     *delegator == DELEGATOR_2.clone()
 }
 
