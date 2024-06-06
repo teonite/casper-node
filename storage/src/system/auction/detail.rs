@@ -3,16 +3,14 @@ use std::{collections::BTreeMap, convert::TryInto};
 use num_rational::Ratio;
 
 use casper_types::{
-    account::AccountHash,
-    bytesrepr::{FromBytes, ToBytes},
-    system::auction::{
+    account::AccountHash, bytesrepr::{FromBytes, ToBytes}, system::auction::{
         BidAddr, BidKind, Delegator, Error, SeigniorageAllocation, SeigniorageRecipient,
         SeigniorageRecipientsSnapshot, UnbondingPurse, UnbondingPurses, ValidatorBid,
         ValidatorBids, AUCTION_DELAY_KEY, ERA_END_TIMESTAMP_MILLIS_KEY, ERA_ID_KEY,
         SEIGNIORAGE_RECIPIENTS_SNAPSHOT_KEY, UNBONDING_DELAY_KEY, VALIDATOR_SLOTS_KEY,
-    },
-    ApiError, CLTyped, EraId, Key, KeyTag, PublicKey, URef, U512,
+    }, ApiError, CLTyped, EraId, Key, KeyTag, PublicKey, SecretKey, URef, U512
 };
+use once_cell::sync::Lazy;
 use tracing::{error, warn};
 
 use super::{
@@ -530,6 +528,18 @@ where
     }
 }
 
+// TODO(jck): remove this once proper whitelist is implemented
+static DELEGATOR_2: Lazy<PublicKey> = Lazy::new(|| {
+    let secret_key = SecretKey::ed25519_from_bytes([207; SecretKey::ED25519_LENGTH]).unwrap();
+    PublicKey::from(&secret_key)
+});
+static DELEGATOR_2_ADDR: Lazy<AccountHash> = Lazy::new(|| AccountHash::from(&*DELEGATOR_2));
+
+// TODO(jck)
+fn is_on_whitelist(delegator: &PublicKey, bid: &ValidatorBid) -> bool {
+    *delegator == DELEGATOR_2.clone()
+}
+
 /// If specified validator exists, and if validator is not yet at max delegators count, processes
 /// delegation. For a new delegation a delegator bid record will be created to track the delegation,
 /// otherwise the existing tracking record will be updated.
@@ -573,13 +583,13 @@ where
         let whitelist_delegator_count = *bid.whitelist_size();
         if delegator_count
             >= max_delegators_per_validator as usize - whitelist_delegator_count as usize
-        {
-            warn!(
-                %delegator_count, %max_delegators_per_validator,
-                "delegator_count {}, max_delegators_per_validator {}",
-                delegator_count, max_delegators_per_validator
-            );
-            return Err(Error::ExceededDelegatorSizeLimit.into());
+            && !is_on_whitelist(&delegator_public_key, &bid) {
+                warn!(
+                    %delegator_count, %max_delegators_per_validator,
+                    "delegator_count {}, max_delegators_per_validator {}",
+                    delegator_count, max_delegators_per_validator
+                );
+                return Err(Error::ExceededDelegatorSizeLimit.into());
         }
 
         let bonding_purse = provider.create_purse()?;

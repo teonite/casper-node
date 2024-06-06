@@ -4164,11 +4164,22 @@ fn should_enforce_max_delegators_per_validator_cap_with_vips_2() {
     )
     .build();
 
+    let transfer_to_delegator_4 = ExecuteRequestBuilder::standard(
+        *DEFAULT_ACCOUNT_ADDR,
+        CONTRACT_TRANSFER_TO_ACCOUNT,
+        runtime_args! {
+            ARG_TARGET => *DELEGATOR_2_ADDR,
+            ARG_AMOUNT => U512::from(BID_ACCOUNT_1_BALANCE)
+        },
+    )
+    .build();
+
     let post_genesis_request = vec![
         transfer_to_validator_1,
         transfer_to_delegator_1,
         transfer_to_delegator_2,
         transfer_to_delegator_3,
+        transfer_to_delegator_4,
     ];
 
     for request in post_genesis_request {
@@ -4231,7 +4242,6 @@ fn should_enforce_max_delegators_per_validator_cap_with_vips_2() {
         builder.exec(request).expect_success().commit();
     }
 
-    // TODO(jck): make sure this delegator is not on the whitelist
     let delegation_request_3 = ExecuteRequestBuilder::standard(
         *DELEGATOR_1_ADDR,
         CONTRACT_DELEGATE,
@@ -4251,19 +4261,18 @@ fn should_enforce_max_delegators_per_validator_cap_with_vips_2() {
         Error::Exec(ExecError::Revert(ApiError::AuctionError(auction_error)))
         if auction_error == AuctionError::ExceededDelegatorSizeLimit as u8));
 
-    // // TODO(jck): make sure this delegator IS on the whitelist
-    // let delegation_request_4 = ExecuteRequestBuilder::standard(
-    //     *DELEGATOR_1_ADDR,
-    //     CONTRACT_DELEGATE,
-    //     runtime_args! {
-    //         ARG_AMOUNT => U512::from(DEFAULT_MINIMUM_DELEGATION_AMOUNT),
-    //         ARG_VALIDATOR => NON_FOUNDER_VALIDATOR_1_PK.clone(),
-    //         ARG_DELEGATOR => DELEGATOR_1.clone(),
-    //     },
-    // )
-    // .build();
-    // builder.exec(delegation_request_3).expect_success();
-
+    // TODO(jck): make sure this delegator IS on the whitelist
+    let delegation_request_4 = ExecuteRequestBuilder::standard(
+        *DELEGATOR_2_ADDR,
+        CONTRACT_DELEGATE,
+        runtime_args! {
+            ARG_AMOUNT => U512::from(DEFAULT_MINIMUM_DELEGATION_AMOUNT),
+            ARG_VALIDATOR => NON_FOUNDER_VALIDATOR_1_PK.clone(),
+            ARG_DELEGATOR => DELEGATOR_2.clone(),
+        },
+    )
+    .build();
+    builder.exec(delegation_request_4).expect_success();
 }
 
 #[ignore]

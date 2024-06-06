@@ -22,6 +22,8 @@ pub const ARG_AMOUNT: &str = "amount";
 pub const ARG_DELEGATION_RATE: &str = "delegation_rate";
 /// Named constant for `whitelist_size`.
 pub const ARG_WHITELIST_SIZE: &str = "whitelist_size";
+/// Named constant for `whitelist`.
+pub const ARG_WHITELIST: &str = "whitelist";
 /// Named constant for `public_key`.
 pub const ARG_PUBLIC_KEY: &str = "public_key";
 /// Named constant for `new_public_key`.
