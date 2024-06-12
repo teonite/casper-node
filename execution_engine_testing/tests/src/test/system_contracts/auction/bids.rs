@@ -4208,6 +4208,7 @@ fn should_enforce_max_delegators_per_validator_cap_add_vip_delegator() {
         Error::Exec(ExecError::Revert(ApiError::AuctionError(auction_error)))
         if auction_error == AuctionError::ExceededDelegatorSizeLimit as u8));
 
+    // TODO(jck): DELEGATOR_1 instead of 2, once proper whitelist implementation
     // add DELEGATOR_2_ADDR to whitelist
     let whitelist_request = ExecuteRequestBuilder::standard(
         *NON_FOUNDER_VALIDATOR_1_ADDR,
@@ -4219,13 +4220,12 @@ fn should_enforce_max_delegators_per_validator_cap_add_vip_delegator() {
     ).build();
     builder.exec(whitelist_request).expect_success();
 
-    // TODO(jck): make sure this delegator IS on the whitelist
     let delegation_request_4 = ExecuteRequestBuilder::standard(
         *DELEGATOR_2_ADDR,
         CONTRACT_DELEGATE,
         runtime_args! {
             ARG_AMOUNT => U512::from(DEFAULT_MINIMUM_DELEGATION_AMOUNT),
-            ARG_VALIDATOR => NON_FOUNDER_VALIDATOR_1_ADDR.clone(),
+            ARG_VALIDATOR => NON_FOUNDER_VALIDATOR_1_PK.clone(),
             ARG_DELEGATOR => DELEGATOR_2.clone(),
         },
     )

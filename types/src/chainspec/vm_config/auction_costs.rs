@@ -185,6 +185,7 @@ impl ToBytes for AuctionCosts {
             + activate_bid.serialized_length()
             + redelegate.serialized_length()
             + change_bid_public_key.serialized_length()
+            + add_to_whitelist.serialized_length()
     }
 }
 
