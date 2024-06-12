@@ -59,6 +59,7 @@ quanta = "0.7.2"
 rand = "0.8.3"
 rand_chacha = "0.3.0"
 regex = "1"
+reqwest = { version = "0.11.18", features = ["stream"] }
 rmp-serde = "0.14.4"
 schemars = { version = "0.8.16", features = ["preserve_order", "impl_json_schema"] }
 serde = { version = "1", features = ["derive", "rc"] }
@@ -107,7 +108,7 @@ pretty_assertions = "0.7.2"
 proptest = "1.0.0"
 proptest-derive = "0.3.0"
 rand_core = "0.6.2"
-reqwest = { version = "0.11.18", features = ["stream"] }
+#reqwest = { version = "0.11.18", features = ["stream"] }
 tokio = { version = "1", features = ["test-util"] }
 
 [features]

@@ -115,4 +115,6 @@ impl LocalSigner {
 #[derive(DataSize)]
 pub struct RemoteSigner {
     public_key: PublicKey,
+    #[data_size(skip)] // FIXME: add size estimate
+    client: Client,
 }
