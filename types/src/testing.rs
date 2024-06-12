@@ -6,6 +6,9 @@ use std::{
     iter, thread,
 };
 
+use crate::{
+    crypto, BlockHash, ChainNameDigest, EraId, FinalitySignatureV2, PublicKey, SecretKey, Signature,
+};
 use rand::{
     self,
     distributions::{uniform::SampleRange, Distribution, Standard},
@@ -180,6 +183,54 @@ impl RngCore for TestRng {
 }
 
 impl CryptoRng for TestRng {}
+
+pub struct TestSigner {
+    public_key: PublicKey,
+    secret_key: SecretKey,
+}
+
+impl TestSigner {
+    pub fn new(secret_key: SecretKey) -> Self {
+        let public_key = PublicKey::from(&secret_key);
+        TestSigner {
+            public_key,
+            secret_key,
+        }
+    }
+
+    pub fn random(rng: &mut TestRng) -> Self {
+        let secret_key = SecretKey::random(rng);
+        Self::new(secret_key)
+    }
+
+    pub fn public_signing_key(&self) -> PublicKey {
+        self.public_key.clone()
+    }
+
+    pub fn sign_bytes<T: AsRef<[u8]>>(&self, message: T) -> Signature {
+        crypto::sign(message, &self.secret_key, &self.public_key)
+    }
+
+    pub fn create_finality_signature(
+        &self,
+        block_hash: BlockHash,
+        block_height: u64,
+        era_id: EraId,
+        chain_name_hash: ChainNameDigest,
+    ) -> FinalitySignatureV2 {
+        let bytes =
+            FinalitySignatureV2::bytes_to_sign(block_hash, block_height, era_id, chain_name_hash);
+        let signature = self.sign_bytes(bytes);
+        FinalitySignatureV2::new(
+            block_hash,
+            block_height,
+            era_id,
+            chain_name_hash,
+            signature,
+            self.public_signing_key(),
+        )
+    }
+}
 
 #[cfg(test)]
 mod tests {

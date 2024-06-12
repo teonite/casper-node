@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, thread, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, thread, time::Duration};
 
 use num_rational::Ratio;
 
@@ -239,14 +239,7 @@ fn register_executable_block() {
         vec![ALICE_PUBLIC_KEY.clone()],
         LegacyRequiredFinality::Strict,
     );
-    let sig = FinalitySignatureV2::create(
-        *block.hash(),
-        block.height(),
-        block.era_id(),
-        chain_name_hash,
-        &**ALICE_SIGNER,
-    )
-    .expect("should create finality signature");
+    let sig = ALICE_SIGNER.create_finality_signature(Arc::new(block.clone()), chain_name_hash);
     assert_eq!(
         signature_acquisition.apply_signature(sig.into(), &weights),
         Acceptance::NeededIt
@@ -316,14 +309,7 @@ fn register_block_execution() {
         vec![ALICE_PUBLIC_KEY.clone()],
         LegacyRequiredFinality::Strict,
     );
-    let sig = FinalitySignatureV2::create(
-        *block.hash(),
-        block.height(),
-        block.era_id(),
-        chain_name_hash,
-        &**ALICE_SIGNER,
-    )
-    .expect("should create finality signature");
+    let sig = ALICE_SIGNER.create_finality_signature(Arc::new(block.clone()), chain_name_hash);
     assert_eq!(
         signature_acquisition.apply_signature(sig.into(), &weights),
         Acceptance::NeededIt
@@ -400,14 +386,7 @@ fn register_block_executed() {
         vec![ALICE_PUBLIC_KEY.clone()],
         LegacyRequiredFinality::Strict,
     );
-    let sig = FinalitySignatureV2::create(
-        *block.hash(),
-        block.height(),
-        block.era_id(),
-        chain_name_hash,
-        &**ALICE_SIGNER,
-    )
-    .expect("should create finality signature");
+    let sig = ALICE_SIGNER.create_finality_signature(Arc::new(block.clone()), chain_name_hash);
     assert_eq!(
         signature_acquisition.apply_signature(sig.into(), &weights),
         Acceptance::NeededIt
@@ -475,14 +454,7 @@ fn register_block_marked_complete() {
         vec![ALICE_PUBLIC_KEY.clone()],
         LegacyRequiredFinality::Strict,
     );
-    let sig = FinalitySignatureV2::create(
-        *block.hash(),
-        block.height(),
-        block.era_id(),
-        chain_name_hash,
-        &**ALICE_SIGNER,
-    )
-    .expect("should create finality signature");
+    let sig = ALICE_SIGNER.create_finality_signature(Arc::new(block.clone()), chain_name_hash);
     assert_eq!(
         signature_acquisition.apply_signature(sig.into(), &weights),
         Acceptance::NeededIt

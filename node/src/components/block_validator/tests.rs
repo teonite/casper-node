@@ -422,19 +422,31 @@ impl ValidationContext {
                     .get(&height)
                     .or_else(|| self.delayed_blocks.get(&height))
                     .expect("should have block");
+
+                let block_hash = *block.hash();
+                let block_height = block.height();
+                let era_id = block.era_id();
+                let chain_name_hash = self.chainspec.name_hash();
+
                 let signer = self.signers.get(validator).expect("should have validator");
-                let signature = FinalitySignatureV2::create(
-                    *block.hash(),
-                    block.height(),
-                    block.era_id(),
-                    self.chainspec.name_hash(),
-                    &**signer,
-                )
-                .expect("should create finality signature");
+                let signature = signer.get_signature_sync(FinalitySignatureV2::bytes_to_sign(
+                    block_hash,
+                    block_height,
+                    era_id,
+                    chain_name_hash,
+                ));
+                let finality_signature = FinalitySignatureV2::new(
+                    block_hash,
+                    block_height,
+                    era_id,
+                    chain_name_hash,
+                    signature,
+                    signer.public_signing_key(),
+                );
                 self.signatures
                     .entry(height)
                     .or_default()
-                    .insert(validator.clone(), signature);
+                    .insert(validator.clone(), finality_signature);
             }
         }
         self
@@ -449,19 +461,28 @@ impl ValidationContext {
         for validator in validators {
             for height in min_height..=max_height {
                 let block = self.past_blocks.get(&height).expect("should have block");
+                let block_hash = *block.hash();
+                let block_height = block.height();
+                let era_id = block.era_id();
+                let chain_name_hash = self.chainspec.name_hash();
+
                 let signer = self.signers.get(validator).expect("should have validator");
-                let signature = FinalitySignature::V2(
-                    FinalitySignatureV2::create(
-                        *block.hash(),
-                        block.height(),
-                        block.era_id(),
-                        self.chainspec.name_hash(),
-                        &**signer,
-                    )
-                    .expect("should create finality signature"),
-                );
+                let signature = signer.get_signature_sync(FinalitySignatureV2::bytes_to_sign(
+                    block_hash,
+                    block_height,
+                    era_id,
+                    chain_name_hash,
+                ));
+                let finality_signature = FinalitySignature::V2(FinalitySignatureV2::new(
+                    block_hash,
+                    block_height,
+                    era_id,
+                    chain_name_hash,
+                    signature,
+                    signer.public_signing_key(),
+                ));
                 self.fetchable_signatures
-                    .insert(*signature.fetch_id(), signature);
+                    .insert(*finality_signature.fetch_id(), finality_signature);
             }
         }
         self

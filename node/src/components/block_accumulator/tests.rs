@@ -712,14 +712,7 @@ fn acceptor_should_store_block() {
     let mut signatures = vec![];
 
     // Create the first validator's signature.
-    let fin_sig = FinalitySignatureV2::create(
-        *block.hash(),
-        block.height(),
-        block.era_id(),
-        chain_name_hash,
-        &*signers[0].0,
-    )
-    .expect("should create finality signature");
+    let fin_sig = (*signers[0].0).create_finality_signature(block.clone(), chain_name_hash);
     signatures.push(fin_sig.clone());
     // First signature with 40% weight brings the block to weak finality.
     acceptor
@@ -736,14 +729,7 @@ fn acceptor_should_store_block() {
     assert_eq!(should_store, ShouldStore::Nothing);
 
     // Create the third validator's signature.
-    let fin_sig = FinalitySignatureV2::create(
-        *block.hash(),
-        block.height(),
-        block.era_id(),
-        chain_name_hash,
-        &*signers[2].0,
-    )
-    .expect("should create finality signature");
+    let fin_sig = (*signers[2].0).create_finality_signature(block.clone(), chain_name_hash);
     // The third signature with weight 10% doesn't make the block go to
     // strict finality.
     signatures.push(fin_sig.clone());
@@ -758,14 +744,7 @@ fn acceptor_should_store_block() {
     let non_validator_keys = generate_ed25519_keypair();
     let non_validator_signer = NodeSigner::mock(non_validator_keys.0);
     let faulty_peer = NodeId::random(&mut rng);
-    let bogus_sig = FinalitySignatureV2::create(
-        *block.hash(),
-        block.height(),
-        block.era_id(),
-        chain_name_hash,
-        &*non_validator_signer,
-    )
-    .expect("should create finality signature");
+    let bogus_sig = non_validator_signer.create_finality_signature(block.clone(), chain_name_hash);
     acceptor
         .register_finality_signature(bogus_sig, Some(faulty_peer), VALIDATOR_SLOTS)
         .unwrap();
@@ -777,14 +756,7 @@ fn acceptor_should_store_block() {
     assert_eq!(offenders[0].0, faulty_peer);
 
     // Create the second validator's signature.
-    let fin_sig = FinalitySignatureV2::create(
-        *block.hash(),
-        block.height(),
-        block.era_id(),
-        chain_name_hash,
-        &*signers[1].0,
-    )
-    .expect("should create finality signature");
+    let fin_sig = (*signers[1].0).create_finality_signature(block.clone(), chain_name_hash);
     signatures.push(fin_sig.clone());
     // Second signature with 40% weight brings the block to strict finality.
     acceptor
@@ -807,14 +779,7 @@ fn acceptor_should_store_block() {
     );
 
     // Create the fourth validator's signature.
-    let fin_sig = FinalitySignatureV2::create(
-        *block.hash(),
-        block.height(),
-        block.era_id(),
-        chain_name_hash,
-        &*signers[3].0,
-    )
-    .expect("should create finality signature");
+    let fin_sig = (*signers[3].0).create_finality_signature(block.clone(), chain_name_hash);
     // Already have sufficient finality signatures, so we're not supposed to
     // store anything else.
     acceptor
@@ -1097,17 +1062,11 @@ fn expected_leap_instruction(expected: LeapInstruction, actual: LeapInstruction)
 
 fn block_acceptor(block: BlockV2, chain_name_hash: ChainNameDigest) -> BlockAcceptor {
     let mut acceptor = BlockAcceptor::new(*block.hash(), vec![]);
+    let block = Arc::new(block);
     // One finality signature from our only validator for block 1.
     acceptor
         .register_finality_signature(
-            FinalitySignatureV2::create(
-                *block.hash(),
-                block.height(),
-                block.era_id(),
-                chain_name_hash,
-                &**ALICE_SIGNER,
-            )
-            .expect("should create finality signature"),
+            ALICE_SIGNER.create_finality_signature(block.clone(), chain_name_hash),
             None,
             VALIDATOR_SLOTS,
         )
@@ -1116,7 +1075,7 @@ fn block_acceptor(block: BlockV2, chain_name_hash: ChainNameDigest) -> BlockAcce
     let meta_block = {
         let mut state = MetaBlockState::new();
         state.register_has_sufficient_finality();
-        MetaBlock::new_forward(Arc::new(block), vec![], state)
+        MetaBlock::new_forward(block, vec![], state)
             .try_into()
             .unwrap()
     };
@@ -1157,32 +1116,11 @@ fn accumulator_purge() {
     let chain_name_hash = ChainNameDigest::random(&mut rng);
 
     // One finality signature from our only validator for block 1.
-    let fin_sig_1 = FinalitySignatureV2::create(
-        *block_1.hash(),
-        block_1.height(),
-        block_1.era_id(),
-        chain_name_hash,
-        &**ALICE_SIGNER,
-    )
-    .expect("should create finality signature");
+    let fin_sig_1 = ALICE_SIGNER.create_finality_signature(block_1.clone(), chain_name_hash);
     // One finality signature from our only validator for block 2.
-    let fin_sig_2 = FinalitySignatureV2::create(
-        *block_2.hash(),
-        block_2.height(),
-        block_2.era_id(),
-        chain_name_hash,
-        &**ALICE_SIGNER,
-    )
-    .expect("should create finality signature");
+    let fin_sig_2 = ALICE_SIGNER.create_finality_signature(block_2.clone(), chain_name_hash);
     // One finality signature from our only validator for block 3.
-    let fin_sig_3 = FinalitySignatureV2::create(
-        *block_3.hash(),
-        block_3.height(),
-        block_3.era_id(),
-        chain_name_hash,
-        &**ALICE_SIGNER,
-    )
-    .expect("should create finality signature");
+    let fin_sig_3 = ALICE_SIGNER.create_finality_signature(block_3.clone(), chain_name_hash);
 
     // Register the eras in the validator matrix so the blocks are valid.
     {
@@ -1341,14 +1279,8 @@ fn accumulator_purge() {
             .build(&mut rng),
     );
 
-    let in_range_block_sig = FinalitySignatureV2::create(
-        *in_range_block.hash(),
-        in_range_block.height(),
-        in_range_block.era_id(),
-        chain_name_hash,
-        &**ALICE_SIGNER,
-    )
-    .expect("should create finality signature");
+    let in_range_block_sig =
+        ALICE_SIGNER.create_finality_signature(in_range_block.clone(), chain_name_hash);
 
     {
         // Insert the in range block with sufficient finality.
@@ -1381,14 +1313,8 @@ fn accumulator_purge() {
             .switch_block(false)
             .build(&mut rng),
     );
-    let out_of_range_block_sig = FinalitySignatureV2::create(
-        *out_of_range_block.hash(),
-        out_of_range_block.height(),
-        out_of_range_block.era_id(),
-        chain_name_hash,
-        &**ALICE_SIGNER,
-    )
-    .expect("should create finality signature");
+    let out_of_range_block_sig =
+        ALICE_SIGNER.create_finality_signature(out_of_range_block.clone(), chain_name_hash);
 
     {
         // Insert the out of range block with sufficient finality.
@@ -1467,14 +1393,8 @@ fn accumulator_purge() {
             .switch_block(false)
             .build(&mut rng),
     );
-    let future_block_sig = FinalitySignatureV2::create(
-        *future_block.hash(),
-        future_block.height(),
-        future_block.era_id(),
-        chain_name_hash,
-        &**ALICE_SIGNER,
-    )
-    .expect("should create finality signature");
+    let future_block_sig =
+        ALICE_SIGNER.create_finality_signature(future_block.clone(), chain_name_hash);
 
     {
         // Insert the future block with sufficient finality.
@@ -1508,14 +1428,8 @@ fn accumulator_purge() {
             .switch_block(false)
             .build(&mut rng),
     );
-    let future_unsigned_block_sig = FinalitySignatureV2::create(
-        *future_unsigned_block.hash(),
-        future_unsigned_block.height(),
-        future_unsigned_block.era_id(),
-        chain_name_hash,
-        &**ALICE_SIGNER,
-    )
-    .expect("should create finality signature");
+    let future_unsigned_block_sig =
+        ALICE_SIGNER.create_finality_signature(future_unsigned_block.clone(), chain_name_hash);
 
     {
         // Insert the future unsigned block without sufficient finality.
@@ -1646,31 +1560,17 @@ async fn block_accumulator_reactor_flow() {
     .unwrap();
 
     // Create 2 blocks, one parent one child.
-    let block_1 = generate_non_genesis_block(&mut rng);
-    let block_2 = generate_next_block(&mut rng, &block_1);
+    let block_1 = Arc::new(generate_non_genesis_block(&mut rng));
+    let block_2 = Arc::new(generate_next_block(&mut rng, &block_1));
 
     // Also create 2 peers.
     let peer_1 = NodeId::random(&mut rng);
     let peer_2 = NodeId::random(&mut rng);
 
     // One finality signature from our only validator for block 1.
-    let fin_sig_1 = FinalitySignatureV2::create(
-        *block_1.hash(),
-        block_1.height(),
-        block_1.era_id(),
-        chain_name_hash,
-        &**ALICE_SIGNER,
-    )
-    .expect("should create finality signature");
+    let fin_sig_1 = ALICE_SIGNER.create_finality_signature(block_1.clone(), chain_name_hash);
     // One finality signature from our only validator for block 2.
-    let fin_sig_2 = FinalitySignatureV2::create(
-        *block_2.hash(),
-        block_2.height(),
-        block_2.era_id(),
-        chain_name_hash,
-        &**ALICE_SIGNER,
-    )
-    .expect("should create finality signature");
+    let fin_sig_2 = ALICE_SIGNER.create_finality_signature(block_2.clone(), chain_name_hash);
 
     // Register the eras in the validator matrix so the blocks are valid.
     {
@@ -1700,7 +1600,7 @@ async fn block_accumulator_reactor_flow() {
         runner
             .process_injected_effects(|effect_builder| {
                 let event = super::Event::ReceivedBlock {
-                    block: Arc::new(block_1.clone()),
+                    block: block_1.clone(),
                     sender: peer_2,
                 };
                 effect_builder
@@ -1719,7 +1619,7 @@ async fn block_accumulator_reactor_flow() {
             .storage
             .read_block_by_hash(*block_1.hash())
             .unwrap();
-        assert_eq!(expected_block, block_1.clone().into());
+        assert_eq!(expected_block, (*block_1).clone().into());
         let expected_block_signatures = runner
             .reactor()
             .storage
@@ -1739,7 +1639,7 @@ async fn block_accumulator_reactor_flow() {
 
         let block_accumulator = &mut reactor.block_accumulator;
         let event = super::Event::ReceivedBlock {
-            block: Arc::new(block_2.clone()),
+            block: block_2.clone(),
             sender: peer_2,
         };
         let effects = block_accumulator.handle_event(effect_builder, &mut rng, event);
@@ -1770,7 +1670,7 @@ async fn block_accumulator_reactor_flow() {
             .storage
             .read_block_by_hash(*block_2.hash())
             .unwrap();
-        assert_eq!(expected_block, block_2.clone().into());
+        assert_eq!(expected_block, (*block_2).clone().into());
         let expected_block_signatures = runner
             .reactor()
             .storage
@@ -1931,7 +1831,7 @@ async fn block_accumulator_reactor_flow() {
         }
     }
 
-    let older_block = generate_older_block(&mut rng, &block_1, 1);
+    let older_block = Arc::new(generate_older_block(&mut rng, &block_1, 1));
     // Register an older block.
     {
         let effect_builder = runner.effect_builder();
@@ -1939,7 +1839,7 @@ async fn block_accumulator_reactor_flow() {
 
         let block_accumulator = &mut reactor.block_accumulator;
         let event = super::Event::ReceivedBlock {
-            block: Arc::new(older_block.clone()),
+            block: older_block.clone(),
             sender: peer_1,
         };
         let effects = block_accumulator.handle_event(effect_builder, &mut rng, event);
@@ -1951,14 +1851,8 @@ async fn block_accumulator_reactor_flow() {
             .contains_key(older_block.hash()));
     }
 
-    let older_block_signature = FinalitySignatureV2::create(
-        *older_block.hash(),
-        older_block.height(),
-        older_block.era_id(),
-        chain_name_hash,
-        &**ALICE_SIGNER,
-    )
-    .expect("should create finality signature");
+    let older_block_signature =
+        ALICE_SIGNER.create_finality_signature(older_block.clone(), chain_name_hash);
     // Register a signature for an older block.
     {
         let effect_builder = runner.effect_builder();
@@ -1980,20 +1874,16 @@ async fn block_accumulator_reactor_flow() {
             .contains_key(older_block.hash()));
     }
 
-    let old_era_block = TestBlockBuilder::new()
-        .era(block_1.era_id() - RECENT_ERA_INTERVAL - 1)
-        .height(1)
-        .switch_block(false)
-        .build(&mut rng);
+    let old_era_block = Arc::new(
+        TestBlockBuilder::new()
+            .era(block_1.era_id() - RECENT_ERA_INTERVAL - 1)
+            .height(1)
+            .switch_block(false)
+            .build(&mut rng),
+    );
 
-    let old_era_signature = FinalitySignatureV2::create(
-        *old_era_block.hash(),
-        old_era_block.height(),
-        old_era_block.era_id(),
-        chain_name_hash,
-        &**ALICE_SIGNER,
-    )
-    .expect("should create finality signature");
+    let old_era_signature =
+        ALICE_SIGNER.create_finality_signature(old_era_block.clone(), chain_name_hash);
     // Register a signature for a block in an old era.
     {
         let effect_builder = runner.effect_builder();
@@ -2030,38 +1920,17 @@ async fn block_accumulator_doesnt_purge_with_delayed_block_execution() {
     .unwrap();
 
     // Create 1 block.
-    let block_1 = generate_non_genesis_block(&mut rng);
+    let block_1 = Arc::new(generate_non_genesis_block(&mut rng));
 
     // Also create 2 peers.
     let peer_1 = NodeId::random(&mut rng);
     let peer_2 = NodeId::random(&mut rng);
 
-    let fin_sig_bob = FinalitySignatureV2::create(
-        *block_1.hash(),
-        block_1.height(),
-        block_1.era_id(),
-        chain_name_hash,
-        &**BOB_SIGNER,
-    )
-    .expect("should create finality signature");
+    let fin_sig_bob = BOB_SIGNER.create_finality_signature(block_1.clone(), chain_name_hash);
 
-    let fin_sig_carol = FinalitySignatureV2::create(
-        *block_1.hash(),
-        block_1.height(),
-        block_1.era_id(),
-        chain_name_hash,
-        &**CAROL_SIGNER,
-    )
-    .expect("should create finality signature");
+    let fin_sig_carol = CAROL_SIGNER.create_finality_signature(block_1.clone(), chain_name_hash);
 
-    let fin_sig_alice = FinalitySignatureV2::create(
-        *block_1.hash(),
-        block_1.height(),
-        block_1.era_id(),
-        chain_name_hash,
-        &**ALICE_SIGNER,
-    )
-    .expect("should create finality signature");
+    let fin_sig_alice = ALICE_SIGNER.create_finality_signature(block_1.clone(), chain_name_hash);
 
     // Register the era in the validator matrix so the block is valid.
     {
@@ -2115,7 +1984,7 @@ async fn block_accumulator_doesnt_purge_with_delayed_block_execution() {
         runner
             .process_injected_effects(|effect_builder| {
                 let event = super::Event::ReceivedBlock {
-                    block: Arc::new(block_1.clone()),
+                    block: block_1.clone(),
                     sender: peer_2,
                 };
                 effect_builder
@@ -2134,7 +2003,7 @@ async fn block_accumulator_doesnt_purge_with_delayed_block_execution() {
             .storage
             .read_block_by_hash(*block_1.hash())
             .unwrap();
-        assert_eq!(expected_block, block_1.clone().into());
+        assert_eq!(expected_block, (*block_1).clone().into());
         let expected_block_signatures = runner
             .reactor()
             .storage
@@ -2166,7 +2035,7 @@ async fn block_accumulator_doesnt_purge_with_delayed_block_execution() {
                 meta_block_state.register_as_executed();
                 let event = super::Event::ExecutedBlock {
                     meta_block: MetaBlock::new_forward(
-                        Arc::new(block_1.clone()),
+                        block_1.clone(),
                         Vec::new(),
                         meta_block_state,
                     )

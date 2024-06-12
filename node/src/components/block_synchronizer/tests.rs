@@ -14,12 +14,7 @@ use num_rational::Ratio;
 use rand::{seq::IteratorRandom, Rng};
 
 use casper_storage::data_access_layer::ExecutionResultsChecksumResult;
-use casper_types::{
-    global_state::TrieMerkleProof, testing::TestRng, AccessRights, BlockV2, CLValue,
-    ChainNameDigest, Chainspec, Deploy, Digest, EraId, FinalitySignatureV2, Key,
-    LegacyRequiredFinality, ProtocolVersion, PublicKey, SecretKey, Signer, StoredValue,
-    TestBlockBuilder, TestBlockV1Builder, TimeDiff, URef, U512,
-};
+use casper_types::{global_state::TrieMerkleProof, testing::TestRng, AccessRights, BlockV2, CLValue, ChainNameDigest, Chainspec, Deploy, Digest, EraId, FinalitySignatureV2, Key, LegacyRequiredFinality, ProtocolVersion, PublicKey, SecretKey, StoredValue, TestBlockBuilder, TestBlockV1Builder, TimeDiff, URef, U512, sign};
 
 use super::*;
 use crate::{
@@ -214,19 +209,28 @@ fn register_multiple_signatures<'a, I: IntoIterator<Item = &'a Arc<NodeSigner>>>
     validator_signers: I,
     chain_name_hash: ChainNameDigest,
 ) {
+    let block_hash = *block.hash();
+    let block_height = block.height();
+    let era_id = block.era_id();
     for signer in validator_signers {
         // Register a finality signature
-        let signature = FinalitySignatureV2::create(
-            *block.hash(),
-            block.height(),
-            block.era_id(),
+        let signature = signer.get_signature_sync(FinalitySignatureV2::bytes_to_sign(
+            block_hash,
+            block_height,
+            era_id,
             chain_name_hash,
-            &**signer,
-        )
-        .expect("should create finality signature");
-        assert!(signature.is_verified().is_ok());
+        ));
+        let finality_signature = FinalitySignatureV2::new(
+            block_hash,
+            block_height,
+            era_id,
+            chain_name_hash,
+            signature,
+            signer.public_signing_key(),
+        );
+        assert!(finality_signature.is_verified().is_ok());
         assert!(builder
-            .register_finality_signature(signature.into(), None)
+            .register_finality_signature(finality_signature.into(), None)
             .is_ok());
     }
 }
@@ -1117,20 +1121,29 @@ async fn fwd_more_signatures_are_requested_if_weak_finality_is_not_reached() {
     );
 
     // Simulate a successful fetch of a single signature
-    let signature = FinalitySignatureV2::create(
+    let block_hash = *block.hash();
+    let block_height = block.height();
+    let era_id = block.era_id();
+    let signature = validators_signers[0].get_signature_sync(FinalitySignatureV2::bytes_to_sign(
+        block_hash,
+        block_height,
+        era_id,
+        chain_name_hash,
+    ));
+    let finality_signature = FinalitySignatureV2::new(
         *block.hash(),
         block.height(),
         block.era_id(),
         chain_name_hash,
-        &*validators_signers[0],
-    )
-    .expect("should create finality signature");
-    assert!(signature.is_verified().is_ok());
+        signature,
+        validators_signers[0].public_signing_key(),
+    );
+    assert!(finality_signature.is_verified().is_ok());
     let effects = block_synchronizer.handle_event(
         mock_reactor.effect_builder(),
         &mut rng,
         Event::FinalitySignatureFetched(Ok(FetchedData::FromPeer {
-            item: Box::new(signature.into()),
+            item: Box::new(finality_signature.into()),
             peer: peers[0],
         })),
     );
@@ -1169,20 +1182,26 @@ async fn fwd_more_signatures_are_requested_if_weak_finality_is_not_reached() {
         .take(weak_finality_threshold(validators_signers.len()))
     {
         // Register a finality signature
-        let signature = FinalitySignatureV2::create(
+        let signature = signer.get_signature_sync(FinalitySignatureV2::bytes_to_sign(
+            block_hash,
+            block_height,
+            era_id,
+            chain_name_hash,
+        ));
+        let finality_signature = FinalitySignatureV2::new(
             *block.hash(),
             block.height(),
             block.era_id(),
             chain_name_hash,
-            &**signer,
-        )
-        .expect("should create finality signature");
-        assert!(signature.is_verified().is_ok());
+            signature,
+            signer.public_signing_key(),
+        );
+        assert!(finality_signature.is_verified().is_ok());
         let effects = block_synchronizer.handle_event(
             mock_reactor.effect_builder(),
             &mut rng,
             Event::FinalitySignatureFetched(Ok(FetchedData::FromPeer {
-                item: Box::new(signature.into()),
+                item: Box::new(finality_signature.into()),
                 peer: peers[2],
             })),
         );
@@ -3341,6 +3360,9 @@ async fn fwd_sync_latch_should_not_decrement_for_old_responses() {
     );
     let peers = test_env.peers();
     let block = test_env.block();
+    let block_hash = *block.hash();
+    let block_height = block.height();
+    let era_id = block.era_id();
     let validator_matrix = test_env.gen_validator_matrix();
     let chain_name_hash = validator_matrix.chain_name_hash();
     let validators_secret_keys = test_env.validator_signers();
@@ -3481,20 +3503,26 @@ async fn fwd_sync_latch_should_not_decrement_for_old_responses() {
             .take(weak_finality_threshold(validators_secret_keys.len()))
         {
             // Register a finality signature
-            let signature = FinalitySignatureV2::create(
-                *block.hash(),
-                block.height(),
-                block.era_id(),
+            let signature = signer.get_signature_sync(FinalitySignatureV2::bytes_to_sign(
+                block_hash,
+                block_height,
+                era_id,
                 chain_name_hash,
-                &**signer,
-            )
-            .expect("should create finality signature");
-            assert!(signature.is_verified().is_ok());
+            ));
+            let finality_signature = FinalitySignatureV2::new(
+                block_hash,
+                block_height,
+                era_id,
+                chain_name_hash,
+                signature,
+                signer.public_signing_key(),
+            );
+            assert!(finality_signature.is_verified().is_ok());
             let effects = block_synchronizer.handle_event(
                 mock_reactor.effect_builder(),
                 &mut rng,
                 Event::FinalitySignatureFetched(Ok(FetchedData::FromPeer {
-                    item: Box::new(signature.into()),
+                    item: Box::new(finality_signature.into()),
                     peer: peers[2],
                 })),
             );
@@ -3542,20 +3570,26 @@ async fn fwd_sync_latch_should_not_decrement_for_old_responses() {
             .take(2)
         {
             // Register a finality signature
-            let signature = FinalitySignatureV2::create(
-                *block.hash(),
-                block.height(),
-                block.era_id(),
+            let signature = signer.get_signature_sync(FinalitySignatureV2::bytes_to_sign(
+                block_hash,
+                block_height,
+                era_id,
                 chain_name_hash,
-                &**signer,
-            )
-            .expect("should create finality signature");
-            assert!(signature.is_verified().is_ok());
+            ));
+            let finality_signature = FinalitySignatureV2::new(
+                block_hash,
+                block_height,
+                era_id,
+                chain_name_hash,
+                signature,
+                signer.public_signing_key(),
+            );
+            assert!(finality_signature.is_verified().is_ok());
             let effects = block_synchronizer.handle_event(
                 mock_reactor.effect_builder(),
                 &mut rng,
                 Event::FinalitySignatureFetched(Ok(FetchedData::FromPeer {
-                    item: Box::new(signature.into()),
+                    item: Box::new(finality_signature.into()),
                     peer: peers[2],
                 })),
             );
@@ -3761,20 +3795,26 @@ async fn fwd_sync_latch_should_not_decrement_for_old_responses() {
                 - weak_finality_threshold(validators_secret_keys.len()),
         ) {
             // Register a finality signature
-            let signature = FinalitySignatureV2::create(
-                *block.hash(),
-                block.height(),
-                block.era_id(),
+            let signature = signer.get_signature_sync(FinalitySignatureV2::bytes_to_sign(
+                block_hash,
+                block_height,
+                era_id,
                 chain_name_hash,
-                &**signer,
-            )
-            .expect("should create finality signature");
-            assert!(signature.is_verified().is_ok());
+            ));
+            let finality_signature = FinalitySignatureV2::new(
+                block_hash,
+                block_height,
+                era_id,
+                chain_name_hash,
+                signature,
+                signer.public_signing_key(),
+            );
+            assert!(finality_signature.is_verified().is_ok());
             let effects = block_synchronizer.handle_event(
                 mock_reactor.effect_builder(),
                 &mut rng,
                 Event::FinalitySignatureFetched(Ok(FetchedData::FromPeer {
-                    item: Box::new(signature.into()),
+                    item: Box::new(finality_signature.into()),
                     peer: peers[2],
                 })),
             );
