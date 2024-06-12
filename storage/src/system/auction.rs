@@ -245,6 +245,38 @@ pub trait Auction:
         )
     }
 
+    // TODO(jck): rewrite docstring
+    /// Adds a new delegator to delegators or increases its current stake. If the target validator
+    /// is missing, the function call returns an error and does nothing.
+    ///
+    /// The function transfers motes from the source purse to the delegator's bonding purse.
+    ///
+    /// This entry point returns the number of tokens currently delegated to a given validator.
+    fn add_to_whitelist(
+        &mut self,
+        validator_public_key: PublicKey,
+        delegator_public_key: PublicKey,
+    ) -> Result<(), ApiError> {
+        if !self.allow_auction_bids() {
+            // Validation set rotation might be disabled on some private chains and we should not
+            // allow new bids to come in.
+            return Err(Error::AuctionBidsDisabled.into());
+        }
+
+        // TODO(jck): is this check sufficient?
+        if !self.is_allowed_session_caller(&AccountHash::from(&validator_public_key)) {
+            return Err(Error::InvalidContext.into());
+        }
+
+        let source = self.get_main_purse()?;
+
+        detail::handle_add_to_whitelist(
+            self,
+            validator_public_key,
+            delegator_public_key,
+        )
+    }
+
     /// Unbonds aka reduces stake by specified amount, adding an entry to the unbonding queue
     ///
     /// The arguments are the delegator's key, the validator's key, and the amount.

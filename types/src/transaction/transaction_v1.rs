@@ -588,7 +588,8 @@ impl TransactionV1 {
                 | TransactionEntryPoint::Delegate
                 | TransactionEntryPoint::Undelegate
                 | TransactionEntryPoint::Redelegate
-                | TransactionEntryPoint::ChangeBidPublicKey => TransactionCategory::Auction,
+                | TransactionEntryPoint::ChangeBidPublicKey
+                | TransactionEntryPoint::AddToWhitelist => TransactionCategory::Auction,
             },
             TransactionTarget::Stored { .. } => TransactionCategory::Standard,
             TransactionTarget::Session { kind, .. } => match kind {
@@ -674,6 +675,9 @@ impl GasLimited for TransactionV1 {
                             }
                             TransactionEntryPoint::ChangeBidPublicKey => {
                                 costs.auction_costs().change_bid_public_key
+                            }
+                            TransactionEntryPoint::AddToWhitelist => {
+                                costs.auction_costs().add_to_whitelist
                             }
                         };
                         amount

@@ -74,6 +74,10 @@ pub enum AuctionMethod {
         public_key: PublicKey,
         new_public_key: PublicKey,
     },
+    AddToWhitelist {
+        validator: PublicKey,
+        delegator: PublicKey,
+    },
 }
 
 impl AuctionMethod {
@@ -102,6 +106,7 @@ impl AuctionMethod {
             TransactionEntryPoint::ChangeBidPublicKey => {
                 Self::new_change_bid_public_key(runtime_args)
             }
+            TransactionEntryPoint::AddToWhitelist => Self::new_add_to_whitelist(runtime_args),
         }
     }
 
@@ -145,6 +150,14 @@ impl AuctionMethod {
             max_delegators_per_validator,
             minimum_delegation_amount,
         })
+    }
+
+    fn new_add_to_whitelist(runtime_args: &RuntimeArgs) -> Result<Self, AuctionMethodError> {
+        let delegator = Self::get_named_argument(runtime_args, auction::ARG_DELEGATOR)?;
+        let validator = Self::get_named_argument(runtime_args, auction::ARG_VALIDATOR)?;
+
+        Ok(Self::AddToWhitelist { validator, delegator})
+
     }
 
     fn new_undelegate(runtime_args: &RuntimeArgs) -> Result<Self, AuctionMethodError> {

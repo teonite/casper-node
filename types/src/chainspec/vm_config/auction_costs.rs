@@ -40,6 +40,9 @@ pub const DEFAULT_READ_ERA_ID_COST: u32 = 10_000;
 pub const DEFAULT_ACTIVATE_BID_COST: u32 = 10_000;
 /// Default cost of the `change_bid_public_key` auction entry point.
 pub const DEFAULT_CHANGE_BID_PUBLIC_KEY_COST: u64 = 5_000_000_000;
+/// Default cost of the `add_to_whitelist` auction entry point.
+// TODO(jck): u32
+pub const DEFAULT_ADD_TO_WHITELIST_COST: u64 = DEFAULT_ADD_BID_COST as u64;
 
 /// Description of the costs of calling auction entrypoints.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
@@ -76,6 +79,9 @@ pub struct AuctionCosts {
     pub redelegate: u32,
     /// Cost of calling the `change_bid_public_key` entry point.
     pub change_bid_public_key: u64,
+    /// Cost of calling the `add_to_whitelist` entry point.
+    // TODO(jck): u32
+    pub add_to_whitelist: u64,
 }
 
 impl Default for AuctionCosts {
@@ -96,6 +102,7 @@ impl Default for AuctionCosts {
             activate_bid: DEFAULT_ACTIVATE_BID_COST,
             redelegate: DEFAULT_REDELEGATE_COST,
             change_bid_public_key: DEFAULT_CHANGE_BID_PUBLIC_KEY_COST,
+            add_to_whitelist: DEFAULT_ADD_TO_WHITELIST_COST,
         }
     }
 }
@@ -120,6 +127,7 @@ impl ToBytes for AuctionCosts {
             activate_bid,
             redelegate,
             change_bid_public_key,
+            add_to_whitelist,
         } = self;
 
         ret.append(&mut get_era_validators.to_bytes()?);
@@ -137,6 +145,7 @@ impl ToBytes for AuctionCosts {
         ret.append(&mut activate_bid.to_bytes()?);
         ret.append(&mut redelegate.to_bytes()?);
         ret.append(&mut change_bid_public_key.to_bytes()?);
+        ret.append(&mut add_to_whitelist.to_bytes()?);
 
         Ok(ret)
     }
@@ -158,6 +167,7 @@ impl ToBytes for AuctionCosts {
             activate_bid,
             redelegate,
             change_bid_public_key,
+            add_to_whitelist,
         } = self;
 
         get_era_validators.serialized_length()
@@ -195,6 +205,7 @@ impl FromBytes for AuctionCosts {
         let (activate_bid, rem) = FromBytes::from_bytes(rem)?;
         let (redelegate, rem) = FromBytes::from_bytes(rem)?;
         let (change_bid_public_key, rem) = FromBytes::from_bytes(rem)?;
+        let (add_to_whitelist, rem) = FromBytes::from_bytes(rem)?;
         Ok((
             Self {
                 get_era_validators,
@@ -212,6 +223,7 @@ impl FromBytes for AuctionCosts {
                 activate_bid,
                 redelegate,
                 change_bid_public_key,
+                add_to_whitelist,
             },
             rem,
         ))
@@ -224,6 +236,8 @@ impl Distribution<AuctionCosts> for Standard {
         // there's a bug in toml...under the hood it uses an i64 when it should use a u64
         // this causes flaky test failures if the random result exceeds i64::MAX
         let change_bid_public_key = rng.gen::<u32>() as u64;
+        // TODO(jck): u32
+        let add_to_whitelist = rng.gen::<u32>() as u64;
 
         AuctionCosts {
             get_era_validators: rng.gen(),
@@ -241,6 +255,7 @@ impl Distribution<AuctionCosts> for Standard {
             activate_bid: rng.gen(),
             redelegate: rng.gen(),
             change_bid_public_key,
+            add_to_whitelist,
         }
     }
 }
@@ -269,6 +284,7 @@ pub mod gens {
             activate_bid in num::u32::ANY,
             redelegate in num::u32::ANY,
             change_bid_public_key in num::u64::ANY,
+            add_to_whitelist in num::u64::ANY,
         ) -> AuctionCosts {
             AuctionCosts {
                 get_era_validators,
@@ -286,6 +302,7 @@ pub mod gens {
                 activate_bid,
                 redelegate,
                 change_bid_public_key,
+                add_to_whitelist,
             }
         }
     }

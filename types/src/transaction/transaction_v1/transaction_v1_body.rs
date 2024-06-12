@@ -117,7 +117,8 @@ impl TransactionV1Body {
             | TransactionEntryPoint::Delegate
             | TransactionEntryPoint::Undelegate
             | TransactionEntryPoint::Redelegate
-            | TransactionEntryPoint::ChangeBidPublicKey => true,
+            | TransactionEntryPoint::ChangeBidPublicKey
+            | TransactionEntryPoint::AddToWhitelist => true,
         }
     }
 
@@ -198,6 +199,9 @@ impl TransactionV1Body {
                 TransactionEntryPoint::ChangeBidPublicKey => {
                     arg_handling::has_valid_change_bid_public_key_args(&self.args)
                 }
+                TransactionEntryPoint::AddToWhitelist => {
+                    arg_handling::has_valid_add_to_whitelist_args(&self.args)
+                }
             },
             TransactionTarget::Stored { .. } => match &self.entry_point {
                 TransactionEntryPoint::Custom(_) => Ok(()),
@@ -208,7 +212,8 @@ impl TransactionV1Body {
                 | TransactionEntryPoint::Undelegate
                 | TransactionEntryPoint::Redelegate
                 | TransactionEntryPoint::ActivateBid
-                | TransactionEntryPoint::ChangeBidPublicKey => {
+                | TransactionEntryPoint::ChangeBidPublicKey
+                | TransactionEntryPoint::AddToWhitelist => {
                     debug!(
                         entry_point = %self.entry_point,
                         "transaction targeting stored entity/package must have custom entry point"
@@ -233,7 +238,8 @@ impl TransactionV1Body {
                 | TransactionEntryPoint::Undelegate
                 | TransactionEntryPoint::Redelegate
                 | TransactionEntryPoint::ActivateBid
-                | TransactionEntryPoint::ChangeBidPublicKey => {
+                | TransactionEntryPoint::ChangeBidPublicKey
+                | TransactionEntryPoint::AddToWhitelist => {
                     debug!(
                         entry_point = %self.entry_point,
                         "transaction with session code must have custom entry point"

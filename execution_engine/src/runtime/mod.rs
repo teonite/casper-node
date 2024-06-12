@@ -993,6 +993,21 @@ where
                 CLValue::from_t(()).map_err(Self::reverter)
             })(),
 
+            auction::METHOD_ADD_TO_WHITELIST => (|| {
+                // TODO(jck): add `add_to_whitelist` auction cost
+                runtime.charge_system_contract_call(auction_costs.change_bid_public_key)?;
+
+                // TODO(jck): actually add to whitelist
+                let delegator = Self::get_named_argument(runtime_args, auction::ARG_DELEGATOR)?;
+                let validator = Self::get_named_argument(runtime_args, auction::ARG_VALIDATOR)?;
+
+                runtime
+                    .add_to_whitelist(validator, delegator)
+                    .map_err(Self::reverter)?;
+
+                CLValue::from_t(()).map_err(Self::reverter)
+            })(),
+
             _ => CLValue::from_t(()).map_err(Self::reverter),
         };
 

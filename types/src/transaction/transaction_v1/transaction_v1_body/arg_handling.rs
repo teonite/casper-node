@@ -41,6 +41,9 @@ const CHANGE_BID_PUBLIC_KEY_ARG_PUBLIC_KEY: RequiredArg<PublicKey> = RequiredArg
 const CHANGE_BID_PUBLIC_KEY_ARG_NEW_PUBLIC_KEY: RequiredArg<PublicKey> =
     RequiredArg::new("new_public_key");
 
+const ADD_TO_WHITELIST_ARG_DELEGATOR: RequiredArg<PublicKey> = RequiredArg::new("delegator");
+const ADD_TO_WHITELIST_ARG_VALIDATOR: RequiredArg<PublicKey> = RequiredArg::new("validator");
+
 struct RequiredArg<T> {
     name: &'static str,
     _phantom: PhantomData<T>,
@@ -342,6 +345,15 @@ pub(in crate::transaction::transaction_v1) fn has_valid_change_bid_public_key_ar
 ) -> Result<(), InvalidTransactionV1> {
     let _public_key = CHANGE_BID_PUBLIC_KEY_ARG_PUBLIC_KEY.get(args)?;
     let _new_public_key = CHANGE_BID_PUBLIC_KEY_ARG_NEW_PUBLIC_KEY.get(args)?;
+    Ok(())
+}
+
+/// Checks the given `RuntimeArgs` are suitable for use in a add to whitelist transaction.
+pub(in crate::transaction::transaction_v1) fn has_valid_add_to_whitelist_args(
+    args: &RuntimeArgs,
+) -> Result<(), InvalidTransactionV1> {
+    let _validator = ADD_TO_WHITELIST_ARG_VALIDATOR.get(args)?;
+    let _delegator = ADD_TO_WHITELIST_ARG_DELEGATOR.get(args)?;
     Ok(())
 }
 

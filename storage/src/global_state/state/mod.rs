@@ -1106,6 +1106,16 @@ pub trait StateProvider {
                 .map_err(|auc_err| {
                     TrackingCopyError::SystemContract(system::Error::Auction(auc_err))
                 }),
+            AuctionMethod::AddToWhitelist {
+                validator,
+                delegator,
+            } => runtime
+                .add_to_whitelist(
+                    validator,
+                    delegator,
+                )
+                .map(|_| AuctionMethodRet::Unit)
+                .map_err(TrackingCopyError::Api),
             AuctionMethod::ChangeBidPublicKey {
                 public_key,
                 new_public_key,

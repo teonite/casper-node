@@ -624,6 +624,22 @@ where
     Ok(updated_amount)
 }
 
+// TODO(jck): rewrite docstring
+/// If specified validator exists, and if validator is not yet at max delegators count, processes
+/// delegation. For a new delegation a delegator bid record will be created to track the delegation,
+/// otherwise the existing tracking record will be updated.
+#[allow(clippy::too_many_arguments)]
+pub fn handle_add_to_whitelist<P>(
+    provider: &mut P,
+    delegator_public_key: PublicKey,
+    validator_public_key: PublicKey,
+) -> Result<(), ApiError>
+where
+    P: StorageProvider + MintProvider + RuntimeProvider,
+{
+    Ok(())
+}
+
 pub fn read_validator_bid<P>(provider: &mut P, bid_key: &Key) -> Result<Box<ValidatorBid>, Error>
 where
     P: StorageProvider + ?Sized,

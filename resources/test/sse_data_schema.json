@@ -2063,6 +2063,13 @@
           ]
         },
         {
+          "description": "TODO(jck): is this required? The `add_to_whitelist` native entry point, used to add a delegator to validator whitelist.",
+          "type": "string",
+          "enum": [
+            "AddToWhitelist"
+          ]
+        },
+        {
           "description": "The `undelegate` native entry point, used to reduce a delegator's stake or remove the delegator if the remaining stake is 0.",
           "type": "string",
           "enum": [

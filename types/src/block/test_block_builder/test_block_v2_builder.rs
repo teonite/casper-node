@@ -198,7 +198,8 @@ impl TestBlockV2Builder {
                         | TransactionEntryPoint::Undelegate
                         | TransactionEntryPoint::Redelegate
                         | TransactionEntryPoint::ActivateBid
-                        | TransactionEntryPoint::ChangeBidPublicKey => {
+                        | TransactionEntryPoint::ChangeBidPublicKey
+                        | TransactionEntryPoint::AddToWhitelist => {
                             staking_hashes.push(txn_hash)
                         }
                     },

@@ -28,6 +28,7 @@ const UNDELEGATE_TAG: u8 = 5;
 const REDELEGATE_TAG: u8 = 6;
 const ACTIVATE_BID_TAG: u8 = 7;
 const CHANGE_BID_PUBLIC_KEY_TAG: u8 = 8;
+const ADD_TO_WHITELIST_TAG: u8 = 9;
 
 /// The entry point of a [`Transaction`].
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, Debug)]
@@ -160,6 +161,20 @@ pub enum TransactionEntryPoint {
         )
     )]
     ChangeBidPublicKey,
+
+    // TODO(jck): rewrite docstring
+    /// The `add_to_whitelist` native entry point, used to change a bid's public key.
+    ///
+    /// Requires the following runtime args:
+    ///   * "public_key": `PublicKey`
+    ///   * "new_public_key": `PublicKey`
+    #[cfg_attr(
+        feature = "json-schema",
+        schemars(
+            description = "The `add_to_whitelist` native entry point, used to add delegator to validator's whitelist."
+        )
+    )]
+    AddToWhitelist,
 }
 
 impl TransactionEntryPoint {
@@ -191,6 +206,8 @@ impl TransactionEntryPoint {
             | TransactionEntryPoint::Undelegate
             | TransactionEntryPoint::Redelegate
             | TransactionEntryPoint::ActivateBid
+            // TODO(jck): holds epoch?
+            | TransactionEntryPoint::AddToWhitelist
             | TransactionEntryPoint::ChangeBidPublicKey => false,
         }
     }
@@ -210,6 +227,7 @@ impl Display for TransactionEntryPoint {
             TransactionEntryPoint::Redelegate => write!(formatter, "redelegate"),
             TransactionEntryPoint::ActivateBid => write!(formatter, "activate_bid"),
             TransactionEntryPoint::ChangeBidPublicKey => write!(formatter, "change_bid_public_key"),
+            TransactionEntryPoint::AddToWhitelist => write!(formatter, "add_to_whitelist"),
         }
     }
 }
@@ -231,6 +249,7 @@ impl ToBytes for TransactionEntryPoint {
             TransactionEntryPoint::ChangeBidPublicKey => {
                 CHANGE_BID_PUBLIC_KEY_TAG.write_bytes(writer)
             }
+            TransactionEntryPoint::AddToWhitelist => ADD_TO_WHITELIST_TAG.write_bytes(writer),
         }
     }
 
@@ -251,6 +270,7 @@ impl ToBytes for TransactionEntryPoint {
                 | TransactionEntryPoint::Undelegate
                 | TransactionEntryPoint::Redelegate
                 | TransactionEntryPoint::ActivateBid
+                | TransactionEntryPoint::AddToWhitelist
                 | TransactionEntryPoint::ChangeBidPublicKey => 0,
             }
     }

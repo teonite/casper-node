@@ -35,6 +35,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "add-to-whitelist"
+version = "0.1.0"
+dependencies = [
+ "casper-contract",
+ "casper-types",
+]
+
+[[package]]
 name = "add-update-associated-key"
 version = "0.1.0"
 dependencies = [

@@ -51,6 +51,7 @@ const CONTRACT_WITHDRAW_BID: &str = "withdraw_bid.wasm";
 const CONTRACT_DELEGATE: &str = "delegate.wasm";
 const CONTRACT_UNDELEGATE: &str = "undelegate.wasm";
 const CONTRACT_REDELEGATE: &str = "redelegate.wasm";
+const CONTRACT_ADD_TO_WHITELIST: &str = "add_to_whitelist.wasm";
 const CONTRACT_CHANGE_BID_PUBLIC_KEY: &str = "change_bid_public_key.wasm";
 
 const TRANSFER_AMOUNT: u64 = MINIMUM_ACCOUNT_CREATION_BALANCE + 1000;
@@ -4051,6 +4052,180 @@ fn should_enforce_max_delegators_per_validator_cap_with_vips() {
         runtime_args! {
             ARG_AMOUNT => U512::from(DEFAULT_MINIMUM_DELEGATION_AMOUNT),
             ARG_VALIDATOR => NON_FOUNDER_VALIDATOR_1_PK.clone(),
+            ARG_DELEGATOR => DELEGATOR_2.clone(),
+        },
+    )
+    .build();
+    builder.exec(delegation_request_4).expect_success();
+}
+
+#[ignore]
+#[test]
+// TODO(jck): better name
+fn should_enforce_max_delegators_per_validator_cap_add_vip_delegator() {
+    // TODO(jck): ensure whitelist_size <= max delegators
+    let chainspec = ChainspecConfig::default().with_max_delegators_per_validator(3u32);
+
+    let data_dir = TempDir::new().expect("should create temp dir");
+    let mut builder = LmdbWasmTestBuilder::new_with_config(data_dir.path(), chainspec);
+
+    builder.run_genesis(LOCAL_GENESIS_REQUEST.clone());
+
+    let transfer_to_validator_1 = ExecuteRequestBuilder::standard(
+        *DEFAULT_ACCOUNT_ADDR,
+        CONTRACT_TRANSFER_TO_ACCOUNT,
+        runtime_args! {
+            ARG_TARGET => *NON_FOUNDER_VALIDATOR_1_ADDR,
+            ARG_AMOUNT => U512::from(TRANSFER_AMOUNT)
+        },
+    )
+    .build();
+
+    let transfer_to_delegator_1 = ExecuteRequestBuilder::standard(
+        *DEFAULT_ACCOUNT_ADDR,
+        CONTRACT_TRANSFER_TO_ACCOUNT,
+        runtime_args! {
+            ARG_TARGET => *BID_ACCOUNT_1_ADDR,
+            ARG_AMOUNT => U512::from(BID_ACCOUNT_1_BALANCE)
+        },
+    )
+    .build();
+
+    let transfer_to_delegator_2 = ExecuteRequestBuilder::standard(
+        *DEFAULT_ACCOUNT_ADDR,
+        CONTRACT_TRANSFER_TO_ACCOUNT,
+        runtime_args! {
+            ARG_TARGET => *BID_ACCOUNT_2_ADDR,
+            ARG_AMOUNT => U512::from(BID_ACCOUNT_1_BALANCE)
+        },
+    )
+    .build();
+
+    let transfer_to_delegator_3 = ExecuteRequestBuilder::standard(
+        *DEFAULT_ACCOUNT_ADDR,
+        CONTRACT_TRANSFER_TO_ACCOUNT,
+        runtime_args! {
+            ARG_TARGET => *DELEGATOR_1_ADDR,
+            ARG_AMOUNT => U512::from(BID_ACCOUNT_1_BALANCE)
+        },
+    )
+    .build();
+
+    let transfer_to_delegator_4 = ExecuteRequestBuilder::standard(
+        *DEFAULT_ACCOUNT_ADDR,
+        CONTRACT_TRANSFER_TO_ACCOUNT,
+        runtime_args! {
+            ARG_TARGET => *DELEGATOR_2_ADDR,
+            ARG_AMOUNT => U512::from(BID_ACCOUNT_1_BALANCE)
+        },
+    )
+    .build();
+
+    let post_genesis_request = vec![
+        transfer_to_validator_1,
+        transfer_to_delegator_1,
+        transfer_to_delegator_2,
+        transfer_to_delegator_3,
+        transfer_to_delegator_4,
+    ];
+
+    for request in post_genesis_request {
+        builder.exec(request).expect_success().commit();
+    }
+
+    let add_bid_request_1 = ExecuteRequestBuilder::standard(
+        *NON_FOUNDER_VALIDATOR_1_ADDR,
+        CONTRACT_ADD_BID,
+        runtime_args! {
+            ARG_PUBLIC_KEY => NON_FOUNDER_VALIDATOR_1_PK.clone(),
+            ARG_AMOUNT => U512::from(ADD_BID_AMOUNT_1),
+            ARG_DELEGATION_RATE => ADD_BID_DELEGATION_RATE_1,
+            ARG_WHITELIST_SIZE => ADD_BID_WHITELIST_SIZE,
+        },
+    )
+    .build();
+
+    builder.exec(add_bid_request_1).expect_success().commit();
+
+    for _ in 0..=builder.get_auction_delay() {
+        let step_request = StepRequestBuilder::new()
+            .with_parent_state_hash(builder.get_post_state_hash())
+            .with_protocol_version(ProtocolVersion::V1_0_0)
+            .with_next_era_id(builder.get_era().successor())
+            .with_run_auction(true)
+            .build();
+
+        assert!(
+            builder.step(step_request).is_success(),
+            "must execute step request"
+        );
+    }
+
+    let delegation_request_1 = ExecuteRequestBuilder::standard(
+        *BID_ACCOUNT_1_ADDR,
+        CONTRACT_DELEGATE,
+        runtime_args! {
+            ARG_AMOUNT => U512::from(DEFAULT_MINIMUM_DELEGATION_AMOUNT),
+            ARG_VALIDATOR => NON_FOUNDER_VALIDATOR_1_PK.clone(),
+            ARG_DELEGATOR => BID_ACCOUNT_1_PK.clone(),
+        },
+    )
+    .build();
+
+    let delegation_request_2 = ExecuteRequestBuilder::standard(
+        *BID_ACCOUNT_2_ADDR,
+        CONTRACT_DELEGATE,
+        runtime_args! {
+            ARG_AMOUNT => U512::from(DEFAULT_MINIMUM_DELEGATION_AMOUNT),
+            ARG_VALIDATOR => NON_FOUNDER_VALIDATOR_1_PK.clone(),
+            ARG_DELEGATOR => BID_ACCOUNT_2_PK.clone(),
+        },
+    )
+    .build();
+
+    let delegation_requests = [delegation_request_1, delegation_request_2];
+
+    for request in delegation_requests {
+        builder.exec(request).expect_success().commit();
+    }
+
+    let delegation_request_3 = ExecuteRequestBuilder::standard(
+        *DELEGATOR_1_ADDR,
+        CONTRACT_DELEGATE,
+        runtime_args! {
+            ARG_AMOUNT => U512::from(DEFAULT_MINIMUM_DELEGATION_AMOUNT),
+            ARG_VALIDATOR => NON_FOUNDER_VALIDATOR_1_PK.clone(),
+            ARG_DELEGATOR => DELEGATOR_1.clone(),
+        },
+    )
+    .build();
+
+    builder.exec(delegation_request_3).expect_failure();
+    let error = builder.get_error().expect("must get error");
+
+    assert!(matches!(
+        error,
+        Error::Exec(ExecError::Revert(ApiError::AuctionError(auction_error)))
+        if auction_error == AuctionError::ExceededDelegatorSizeLimit as u8));
+
+    // add DELEGATOR_2_ADDR to whitelist
+    let whitelist_request = ExecuteRequestBuilder::standard(
+        *NON_FOUNDER_VALIDATOR_1_ADDR,
+        CONTRACT_ADD_TO_WHITELIST,
+        runtime_args! {
+            ARG_VALIDATOR => NON_FOUNDER_VALIDATOR_1_PK.clone(),
+            ARG_DELEGATOR => DELEGATOR_2.clone(),
+        }
+    ).build();
+    builder.exec(whitelist_request).expect_success();
+
+    // TODO(jck): make sure this delegator IS on the whitelist
+    let delegation_request_4 = ExecuteRequestBuilder::standard(
+        *DELEGATOR_2_ADDR,
+        CONTRACT_DELEGATE,
+        runtime_args! {
+            ARG_AMOUNT => U512::from(DEFAULT_MINIMUM_DELEGATION_AMOUNT),
+            ARG_VALIDATOR => NON_FOUNDER_VALIDATOR_1_ADDR.clone(),
             ARG_DELEGATOR => DELEGATOR_2.clone(),
         },
     )
