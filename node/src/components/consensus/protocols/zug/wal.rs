@@ -179,11 +179,11 @@ mod tests {
     use std::iter::from_fn;
 
     use crate::components::consensus::{cl_context::ClContext, protocols::common};
-    use casper_types::{PublicKey, SecretKey, Signer, Timestamp, U512};
+    use casper_types::{PublicKey, SecretKey, Timestamp, U512};
     use tempfile::tempdir;
 
     use super::*;
-    use crate::types::NodeSigner;
+    use crate::{consensus::ValidatorSecret, types::NodeSigner};
     use once_cell::sync::Lazy;
 
     const INSTANCE_ID_DATA: &[u8; 1] = &[123u8; 1];
@@ -207,7 +207,13 @@ mod tests {
         let instance_id = ClContext::hash(INSTANCE_ID_DATA);
         Box::new(move |round_id, content: Content<ClContext>| {
             let validator_idx = validators.get_index(&signer.public_signing_key()).unwrap();
-            SignedMessage::sign_new(round_id, instance_id, content, validator_idx, &signer)
+            let signature = signer.sign(&SignedMessage::hash_fields(
+                round_id,
+                &instance_id,
+                &content,
+                validator_idx,
+            ));
+            SignedMessage::new(round_id, instance_id, content, validator_idx, signature)
         })
     }
 

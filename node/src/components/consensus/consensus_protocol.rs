@@ -161,6 +161,8 @@ pub(crate) enum ProtocolOutcome<C: Context> {
     /// This is used to inform the transaction buffer, so we don't propose the same transactions
     /// again. Does not need to be raised for proposals this node created itself.
     HandledProposedBlock(ProposedBlock<C>),
+    /// A valid signature is required to sign a message.
+    SignMessage(C::Hash),
 }
 
 /// An API for a single instance of the consensus.
@@ -219,7 +221,7 @@ pub(crate) trait ConsensusProtocol<C: Context>: Send {
     fn activate_validator(
         &mut self,
         our_id: C::ValidatorId,
-        secret: C::ValidatorSecret,
+        // secret: C::ValidatorSecret,
         timestamp: Timestamp,
         unit_hash_file: Option<PathBuf>,
     ) -> ProtocolOutcomes<C>;

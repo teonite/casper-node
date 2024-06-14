@@ -248,6 +248,15 @@ impl<C: Context + 'static> HighwayProtocol<C> {
                 error!("this validator is faulty: {:?}", fault);
                 vec![ProtocolOutcome::WeAreFaulty]
             }
+            AvEffect::SignWireUnit(_) => {
+                unimplemented!()
+            }
+            AvEffect::SignEndorsement(_) => {
+                unimplemented!()
+            }
+            AvEffect::SignPing(_) => {
+                unimplemented!()
+            }
         }
     }
 
@@ -706,6 +715,7 @@ mod relaxed {
 
     impl<C: Context> ConsensusNetworkMessage for HighwayMessage<C> {}
 }
+use crate::consensus::highway_core::active_validator::Effect;
 pub(crate) use relaxed::{HighwayMessage, HighwayMessageDiscriminants};
 
 mod specimen_support {
@@ -1049,14 +1059,14 @@ where
     fn activate_validator(
         &mut self,
         our_id: C::ValidatorId,
-        secret: C::ValidatorSecret,
+        // secret: C::ValidatorSecret,
         now: Timestamp,
         unit_hash_file: Option<PathBuf>,
     ) -> ProtocolOutcomes<C> {
         let ftt = self.finality_detector.fault_tolerance_threshold();
         let av_effects = self
             .highway
-            .activate_validator(our_id, secret, now, unit_hash_file, ftt);
+            .activate_validator(our_id, now, unit_hash_file, ftt);
         self.process_av_effects(av_effects, now)
     }
 

@@ -8,7 +8,7 @@ use casper_types::{crypto, Digest, PublicKey, SecretKey, Signature};
 
 use crate::{
     components::consensus::traits::{ConsensusValueT, Context, ValidatorSecret},
-    types::{BlockPayload, NodeSigner},
+    types::BlockPayload,
 };
 
 #[derive(DataSize)]
@@ -26,10 +26,10 @@ impl Keypair {
         }
     }
 
-    // #[cfg(test)]
-    // pub(crate) fn public_key(&self) -> &PublicKey {
-    //     &self.public_key
-    // }
+    #[cfg(test)]
+    pub(crate) fn public_key(&self) -> &PublicKey {
+        &self.public_key
+    }
 }
 
 impl From<Arc<SecretKey>> for Keypair {
@@ -43,7 +43,8 @@ impl ValidatorSecret for Keypair {
     type Hash = Digest;
     type Signature = Signature;
 
-    fn sign(&self, hash: &Digest) -> Signature {
+    #[cfg(any(feature = "testing", test))]
+    fn sign(&self, hash: &Digest) -> Self::Signature {
         crypto::sign(hash, self.secret_key.as_ref(), &self.public_key)
     }
 }
@@ -65,7 +66,7 @@ pub struct ClContext;
 impl Context for ClContext {
     type ConsensusValue = Arc<BlockPayload>;
     type ValidatorId = PublicKey;
-    type ValidatorSecret = Arc<NodeSigner>;
+    // type ValidatorSecret = Arc<NodeSigner>;
     type Signature = Signature;
     type Hash = Digest;
     type InstanceId = Digest;

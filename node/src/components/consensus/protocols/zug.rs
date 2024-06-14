@@ -129,15 +129,12 @@ type ProposalsAwaitingValidation<C> = HashSet<(RoundId, HashedProposal<C>, NodeI
 /// Contains the portion of the state required for an active validator to participate in the
 /// protocol.
 #[derive(DataSize)]
-pub(crate) struct ActiveValidator<C>
-where
-    C: Context,
-{
+pub(crate) struct ActiveValidator {
     idx: ValidatorIndex,
-    secret: C::ValidatorSecret,
+    // secret: C::ValidatorSecret,
 }
 
-impl<C: Context> Debug for ActiveValidator<C> {
+impl Debug for ActiveValidator {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ActiveValidator")
@@ -163,7 +160,7 @@ where
     validators: Validators<C::ValidatorId>,
     /// If we are a validator ourselves, we must know which index we
     /// are in the [`Validators`] and have a private key for consensus.
-    active_validator: Option<ActiveValidator<C>>,
+    active_validator: Option<ActiveValidator>,
     /// When an era has already completed, sometimes we still need to keep
     /// it around to provide evidence for equivocation in previous eras.
     evidence_only: bool,
@@ -634,39 +631,36 @@ impl<C: Context + 'static> Zug<C> {
         self.leader_sequence.leader(u64::from(round_id))
     }
 
-    fn create_message(
-        &mut self,
-        round_id: RoundId,
-        content: Content<C>,
-    ) -> Option<SignedMessage<C>> {
-        let (validator_idx, secret_key) = if let Some(active_validator) = &self.active_validator {
-            (active_validator.idx, &active_validator.secret)
+    fn create_message(&mut self, round_id: RoundId, content: Content<C>) -> ProtocolOutcomes<C> {
+        let validator_idx = if let Some(active_validator) = &self.active_validator {
+            active_validator.idx
         } else {
-            return None;
+            return vec![];
         };
         if self.paused {
-            return None;
+            return vec![];
         }
         let already_signed = match &content {
             Content::Echo(_) => self.has_echoed(round_id, validator_idx),
             Content::Vote(_) => self.has_voted(round_id, validator_idx),
         };
         if already_signed {
-            return None;
+            return vec![];
         }
         let signed_msg = SignedMessage::sign_new(
             round_id,
             *self.instance_id(),
             content,
             validator_idx,
-            secret_key,
+            // secret_key,
         );
         // We only return the new message if we are able to record it. If that fails we
         // wouldn't know about our own message after a restart and risk double-signing.
         if self.record_entry(&Entry::SignedMessage(signed_msg.clone()))
             && self.add_content(signed_msg.clone())
         {
-            Some(signed_msg)
+            // Some(signed_msg)
+            unimplemented!()
         } else {
             debug!(
                 our_idx = self.our_idx(),
@@ -674,7 +668,7 @@ impl<C: Context + 'static> Zug<C> {
                 ?content,
                 "couldn't record a signed message in the WAL or add it to the protocol state"
             );
-            None
+            vec![]
         }
     }
 
@@ -691,8 +685,9 @@ impl<C: Context + 'static> Zug<C> {
         maybe_signed_msg
             .into_iter()
             .map(|signed_msg| {
-                let message = Message::Signed(signed_msg);
-                ProtocolOutcome::CreatedGossipMessage(SerializedMessage::from_message(&message))
+                // let message = Message::Signed(signed_msg);
+                // ProtocolOutcome::CreatedGossipMessage(SerializedMessage::from_message(&message))
+                unimplemented!()
             })
             .collect()
     }
@@ -1465,7 +1460,8 @@ impl<C: Context + 'static> Zug<C> {
                             | ProtocolOutcome::QueueAction(_)
                             | ProtocolOutcome::CreateNewBlock(_)
                             | ProtocolOutcome::DoppelgangerDetected
-                            | ProtocolOutcome::Disconnect(_) => false,
+                            | ProtocolOutcome::Disconnect(_)
+                            | ProtocolOutcome::SignMessage(_) => false,
                         }));
                     }
                 },
@@ -1930,34 +1926,35 @@ impl<C: Context + 'static> Zug<C> {
     /// Creates a new proposal message in the current round, and a corresponding signed echo,
     /// inserts them into our protocol state and gossips them.
     fn create_echo_and_proposal(&mut self, proposal: Proposal<C>) -> ProtocolOutcomes<C> {
-        let round_id = self.current_round;
-        let hashed_prop = HashedProposal::new(proposal.clone());
-        let echo_content = Content::Echo(*hashed_prop.hash());
-        let echo = if let Some(echo) = self.create_message(round_id, echo_content) {
-            echo
-        } else {
-            return vec![];
-        };
-        let prop_msg = Message::Proposal {
-            round_id,
-            proposal,
-            instance_id: *self.instance_id(),
-            echo,
-        };
-        if !self.record_entry(&Entry::Proposal(hashed_prop.inner().clone(), round_id)) {
-            error!(
-                our_idx = self.our_idx(),
-                "could not record own proposal in WAL"
-            );
-            vec![]
-        } else if self.round_mut(round_id).insert_proposal(hashed_prop) {
-            self.mark_dirty(round_id);
-            vec![ProtocolOutcome::CreatedGossipMessage(
-                SerializedMessage::from_message(&prop_msg),
-            )]
-        } else {
-            vec![]
-        }
+        // let round_id = self.current_round;
+        // let hashed_prop = HashedProposal::new(proposal.clone());
+        // let echo_content = Content::Echo(*hashed_prop.hash());
+        // let echo = if let Some(echo) = self.create_message(round_id, echo_content) {
+        //     echo
+        // } else {
+        //     return vec![];
+        // };
+        // let prop_msg = Message::Proposal {
+        //     round_id,
+        //     proposal,
+        //     instance_id: *self.instance_id(),
+        //     echo,
+        // };
+        // if !self.record_entry(&Entry::Proposal(hashed_prop.inner().clone(), round_id)) {
+        //     error!(
+        //         our_idx = self.our_idx(),
+        //         "could not record own proposal in WAL"
+        //     );
+        //     vec![]
+        // } else if self.round_mut(round_id).insert_proposal(hashed_prop) {
+        //     self.mark_dirty(round_id);
+        //     vec![ProtocolOutcome::CreatedGossipMessage(
+        //         SerializedMessage::from_message(&prop_msg),
+        //     )]
+        // } else {
+        //     vec![]
+        // }
+        unimplemented!()
     }
 
     /// Returns a parent if a block with that parent could be proposed in the current round, and the
@@ -2337,7 +2334,7 @@ where
     fn activate_validator(
         &mut self,
         our_id: C::ValidatorId,
-        secret: C::ValidatorSecret,
+        // secret: C::ValidatorSecret,
         now: Timestamp,
         wal_file: Option<PathBuf>,
     ) -> ProtocolOutcomes<C> {
@@ -2357,7 +2354,7 @@ where
                 return outcomes;
             }
             info!(our_idx = idx.0, "start voting");
-            self.active_validator = Some(ActiveValidator { idx, secret });
+            self.active_validator = Some(ActiveValidator { idx });
             debug!(
                 our_idx = idx.0,
                 %now,
@@ -2595,7 +2592,7 @@ mod specimen_support {
                 LargestSpecimen::largest_specimen(estimator, cache),
                 LargestSpecimen::largest_specimen(estimator, cache),
                 LargestSpecimen::largest_specimen(estimator, cache),
-                &LargestSpecimen::largest_specimen(estimator, cache),
+                // &LargestSpecimen::largest_specimen(estimator, cache),
             )
         }
     }

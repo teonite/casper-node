@@ -3,6 +3,7 @@ use std::{
     hash::Hash,
 };
 
+use crate::{effect::Effects, reactor::main_reactor::MainEvent};
 use datasize::DataSize;
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -45,6 +46,7 @@ pub trait ValidatorSecret: Send + DataSize {
 
     type Signature: Eq + PartialEq + Clone + Debug + Hash + Serialize + DeserializeOwned + DataSize;
 
+    #[cfg(any(feature = "testing", test))]
     fn sign(&self, hash: &Self::Hash) -> Self::Signature;
 }
 
@@ -56,8 +58,8 @@ pub trait Context: Clone + DataSize + Debug + Eq + Ord + Hash + Send {
     type ConsensusValue: ConsensusValueT;
     /// Unique identifiers for validators.
     type ValidatorId: ValidatorIdT;
-    /// A validator's secret signing key.
-    type ValidatorSecret: ValidatorSecret<Hash = Self::Hash, Signature = Self::Signature>;
+    // /// A validator's secret signing key.
+    // type ValidatorSecret: ValidatorSecret<Hash = Self::Hash, Signature = Self::Signature>;
     /// A signature type.
     type Signature: Copy
         + Clone
@@ -78,7 +80,7 @@ pub trait Context: Clone + DataSize + Debug + Eq + Ord + Hash + Send {
     fn verify_signature(
         hash: &Self::Hash,
         public_key: &Self::ValidatorId,
-        signature: &<Self::ValidatorSecret as ValidatorSecret>::Signature,
+        signature: &Self::Signature,
     ) -> bool;
 }
 

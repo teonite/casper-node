@@ -33,8 +33,10 @@ use crate::{
     types::BlockPayload,
 };
 
-use crate::consensus::tests::utils::{
-    ALICE_SIGNER, BOB_SIGNER, CAROL_SIGNER, DAVE_SIGNER, ELLEN_SIGNER,
+use crate::consensus::{
+    highway_core::highway::HashedWireUnit,
+    tests::utils::{ALICE_SIGNER, BOB_SIGNER, CAROL_SIGNER, DAVE_SIGNER, ELLEN_SIGNER},
+    ValidatorSecret,
 };
 use consensus_environment::ConsensusEnvironment;
 
@@ -136,7 +138,7 @@ fn send_a_wire_unit_with_too_small_a_round_exp() {
     let panorama: Panorama<ClContext> = Panorama::from(vec![N]);
     let seq_number = panorama.next_seq_num(&state, creator);
     let now = Timestamp::zero();
-    let wunit: WireUnit<ClContext> = WireUnit {
+    let hwunit: HashedWireUnit<ClContext> = WireUnit {
         panorama,
         creator,
         instance_id: ClContext::hash(INSTANCE_ID_DATA),
@@ -145,9 +147,11 @@ fn send_a_wire_unit_with_too_small_a_round_exp() {
         timestamp: now,
         round_exp: 0,
         endorsed: BTreeSet::new(),
-    };
+    }
+    .into_hashed();
+    let hash = hwunit.hash();
     let highway_message: HighwayMessage<ClContext> = HighwayMessage::NewVertex(Vertex::Unit(
-        SignedWireUnit::new(wunit.into_hashed(), &ALICE_SIGNER),
+        SignedWireUnit::new(hwunit, ALICE_SIGNER.sign(&hash)),
     ));
     let mut highway_protocol = new_test_highway_protocol(validators, vec![]);
     let sender = *ALICE_NODE_ID;
@@ -165,7 +169,7 @@ fn send_a_valid_wire_unit() {
     let panorama: Panorama<ClContext> = Panorama::from(vec![N]);
     let seq_number = panorama.next_seq_num(&state, creator);
     let now = Timestamp::zero();
-    let wunit: WireUnit<ClContext> = WireUnit {
+    let hwunit: HashedWireUnit<ClContext> = WireUnit {
         panorama,
         creator,
         instance_id: ClContext::hash(INSTANCE_ID_DATA),
@@ -179,9 +183,11 @@ fn send_a_valid_wire_unit() {
         timestamp: now,
         round_exp: 0,
         endorsed: BTreeSet::new(),
-    };
+    }
+    .into_hashed();
+    let hash = hwunit.hash();
     let highway_message: HighwayMessage<ClContext> = HighwayMessage::NewVertex(Vertex::Unit(
-        SignedWireUnit::new(wunit.into_hashed(), &ALICE_SIGNER),
+        SignedWireUnit::new(hwunit, ALICE_SIGNER.sign(&hash)),
     ));
 
     let mut highway_protocol = new_test_highway_protocol(validators, vec![]);
@@ -222,7 +228,7 @@ fn detect_doppelganger() {
         Default::default(),
         false,
     ));
-    let wunit: WireUnit<ClContext> = WireUnit {
+    let hwunit: HashedWireUnit<ClContext> = WireUnit {
         panorama,
         creator,
         instance_id,
@@ -231,18 +237,15 @@ fn detect_doppelganger() {
         timestamp: now,
         round_exp,
         endorsed: BTreeSet::new(),
-    };
+    }
+    .into_hashed();
+    let hash = hwunit.hash();
     let highway_message: HighwayMessage<ClContext> = HighwayMessage::NewVertex(Vertex::Unit(
-        SignedWireUnit::new(wunit.into_hashed(), &ALICE_SIGNER),
+        SignedWireUnit::new(hwunit, ALICE_SIGNER.sign(&hash)),
     ));
     let mut highway_protocol = new_test_highway_protocol(validators, vec![]);
     // Activate ALICE as validator.
-    let _ = highway_protocol.activate_validator(
-        ALICE_PUBLIC_KEY.clone(),
-        ALICE_SIGNER.clone(),
-        now,
-        None,
-    );
+    let _ = highway_protocol.activate_validator(ALICE_PUBLIC_KEY.clone(), now, None);
     assert!(highway_protocol.is_active());
     let sender = *ALICE_NODE_ID;
     let msg = SerializedMessage::from_message(&highway_message);

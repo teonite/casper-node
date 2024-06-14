@@ -47,7 +47,14 @@ impl ValidatorSecret for TestSecret {
     type Hash = u64;
     type Signature = u64;
 
+    #[cfg(any(feature = "testing", test))]
     fn sign(&self, data: &Self::Hash) -> Self::Signature {
+        data + u64::from(self.0)
+    }
+}
+
+impl TestSecret {
+    pub fn sign(&self, data: u64) -> u64 {
         data + u64::from(self.0)
     }
 }
@@ -66,7 +73,7 @@ impl ConsensusValueT for u32 {
 impl Context for TestContext {
     type ConsensusValue = u32;
     type ValidatorId = u32;
-    type ValidatorSecret = TestSecret;
+    // type ValidatorSecret = TestSecret;
     type Signature = u64;
     type Hash = u64;
     type InstanceId = u64;
@@ -80,7 +87,7 @@ impl Context for TestContext {
     fn verify_signature(
         hash: &Self::Hash,
         public_key: &Self::ValidatorId,
-        signature: &<Self::ValidatorSecret as ValidatorSecret>::Signature,
+        signature: &Self::Signature,
     ) -> bool {
         let computed_signature = hash + u64::from(*public_key);
         computed_signature == *signature
@@ -186,12 +193,16 @@ fn add_unit() -> Result<(), AddUnitError<TestContext>> {
         round_exp: 0u8,
         endorsed: BTreeSet::new(),
     };
-    let unit = SignedWireUnit::new(wunit.clone().into_hashed(), &BOB_SEC);
+    let hwunit = wunit.clone().into_hashed();
+    let hash = hwunit.hash();
+    let unit = SignedWireUnit::new(hwunit, BOB_SEC.sign(hash));
     let maybe_err = state.add_unit(unit).err().map(unit_err);
     assert_eq!(Some(UnitError::SequenceNumber), maybe_err);
     // Still not valid: This would be the third unit in the first round.
     wunit.seq_number = 2;
-    let unit = SignedWireUnit::new(wunit.into_hashed(), &BOB_SEC);
+    let hwunit = wunit.clone().into_hashed();
+    let hash = hwunit.hash();
+    let unit = SignedWireUnit::new(hwunit, BOB_SEC.sign(hash));
     let maybe_err = state.add_unit(unit).err().map(unit_err);
     assert_eq!(Some(UnitError::ThreeUnitsInRound), maybe_err);
 

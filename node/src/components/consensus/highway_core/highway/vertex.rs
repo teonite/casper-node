@@ -89,6 +89,7 @@ mod relaxed {
         Ping(Ping<C>),
     }
 }
+use crate::consensus::highway_core::active_validator::Effect;
 pub use relaxed::{Dependency, DependencyDiscriminants, Vertex, VertexDiscriminants};
 
 impl<C: Context> Dependency<C> {
@@ -318,8 +319,7 @@ where
 }
 
 impl<C: Context> SignedWireUnit<C> {
-    pub(crate) fn new(hashed_wire_unit: HashedWireUnit<C>, secret: &C::ValidatorSecret) -> Self {
-        let signature = secret.sign(&hashed_wire_unit.hash);
+    pub(crate) fn new(hashed_wire_unit: HashedWireUnit<C>, signature: C::Signature) -> Self {
         SignedWireUnit {
             hashed_wire_unit,
             signature,
@@ -497,6 +497,51 @@ impl<C: Context> From<SignedEndorsement<C>> for Endorsements<C> {
     }
 }
 
+/// Data which needs to be signed to create a `Ping` message.
+#[derive(Clone, DataSize, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
+#[serde(bound(
+    serialize = "C::Hash: Serialize",
+    deserialize = "C::Hash: Deserialize<'de>",
+))]
+pub struct PingData<C>
+where
+    C: Context,
+{
+    creator: ValidatorIndex,
+    timestamp: Timestamp,
+    instance_id: C::InstanceId,
+}
+
+impl<C: Context> PingData<C> {
+    pub(crate) fn new(
+        creator: ValidatorIndex,
+        timestamp: Timestamp,
+        instance_id: C::InstanceId,
+    ) -> Self {
+        Self {
+            creator,
+            timestamp,
+            instance_id,
+        }
+    }
+
+    /// Computes the hash of a ping, i.e. of the creator and timestamp.
+    pub fn get_hash(&self) -> C::Hash {
+        Self::hash(self.creator, self.timestamp, self.instance_id)
+    }
+
+    /// Computes the hash of a ping, i.e. of the creator and timestamp.
+    pub fn hash(
+        creator: ValidatorIndex,
+        timestamp: Timestamp,
+        instance_id: C::InstanceId,
+    ) -> C::Hash {
+        let bytes =
+            bincode::serialize(&(creator, timestamp, instance_id)).expect("serialize PingData");
+        <C as Context>::hash(&bytes)
+    }
+}
+
 /// A ping sent by a validator to signal that it is online but has not created new units in a
 /// while.
 #[derive(Clone, DataSize, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
@@ -520,15 +565,28 @@ impl<C: Context> Ping<C> {
         creator: ValidatorIndex,
         timestamp: Timestamp,
         instance_id: C::InstanceId,
-        sk: &C::ValidatorSecret,
+        signature: C::Signature,
     ) -> Self {
-        let signature = sk.sign(&Self::hash(creator, timestamp, instance_id));
         Ping {
             creator,
             timestamp,
             instance_id,
             signature,
         }
+    }
+
+    /// Schedules a new `Ping` to be signed and sent.
+    pub(crate) fn sign_new(
+        creator: ValidatorIndex,
+        timestamp: Timestamp,
+        instance_id: C::InstanceId,
+    ) -> Effect<C> {
+        let data = PingData {
+            creator,
+            timestamp,
+            instance_id,
+        };
+        Effect::SignPing(data)
     }
 
     /// The creator who signals that it is online.
@@ -539,6 +597,14 @@ impl<C: Context> Ping<C> {
     /// The timestamp when the ping was created.
     pub fn timestamp(&self) -> Timestamp {
         self.timestamp
+    }
+
+    pub fn data(&self) -> PingData<C> {
+        PingData {
+            creator: self.creator,
+            timestamp: self.timestamp,
+            instance_id: self.instance_id,
+        }
     }
 
     /// Validates the ping and returns an error if it is not signed by the creator.
@@ -556,17 +622,12 @@ impl<C: Context> Ping<C> {
         if instance_id != our_instance_id {
             return Err(PingError::InstanceId.into());
         }
-        let v_id = validators.id(self.creator).ok_or(PingError::Creator)?;
-        let hash = Self::hash(*creator, *timestamp, *instance_id);
+        let v_id = validators.id(*creator).ok_or(PingError::Creator)?;
+        let data = self.data();
+        let hash = data.get_hash();
         if !C::verify_signature(&hash, v_id, signature) {
             return Err(PingError::Signature.into());
         }
         Ok(())
-    }
-
-    /// Computes the hash of a ping, i.e. of the creator and timestamp.
-    fn hash(creator: ValidatorIndex, timestamp: Timestamp, instance_id: C::InstanceId) -> C::Hash {
-        let bytes = bincode::serialize(&(creator, timestamp, instance_id)).expect("serialize Ping");
-        <C as Context>::hash(&bytes)
     }
 }

@@ -38,6 +38,8 @@ use crate::{
         utils::{Validators, Weight},
         BlockContext,
     },
+    effect::Effects,
+    reactor::main_reactor::MainEvent,
     NodeRng,
 };
 
@@ -111,20 +113,42 @@ impl HighwayMessage {
             false
         }
     }
-}
 
-impl From<Effect<TestContext>> for HighwayMessage {
-    fn from(eff: Effect<TestContext>) -> Self {
-        match eff {
+    #[cfg(any(feature = "testing", test))]
+    pub fn from_effect(effect: Effect<TestContext>) -> Option<Self> {
+        match effect {
             // The effect is `ValidVertex` but we want to gossip it to other
             // validators so for them it's just `Vertex` that needs to be validated.
-            Effect::NewVertex(ValidVertex(v)) => HighwayMessage::NewVertex(Box::new(v)),
-            Effect::ScheduleTimer(t) => HighwayMessage::Timer(t),
-            Effect::RequestNewBlock(block_context) => HighwayMessage::RequestBlock(block_context),
-            Effect::WeAreFaulty(fault) => HighwayMessage::WeAreFaulty(Box::new(fault)),
+            Effect::NewVertex(ValidVertex(v)) => Some(HighwayMessage::NewVertex(Box::new(v))),
+            Effect::ScheduleTimer(t) => Some(HighwayMessage::Timer(t)),
+            Effect::RequestNewBlock(block_context) => Some(HighwayMessage::RequestBlock(block_context)),
+            Effect::WeAreFaulty(fault) => Some(HighwayMessage::WeAreFaulty(Box::new(fault))),
+            Effect::SignWireUnit(_) | Effect::SignEndorsement(_) | Effect::SignPing(_) => None
         }
     }
 }
+
+// impl From<Effect<TestContext>> for HighwayMessage {
+//     fn from(eff: Effect<TestContext>) -> Self {
+//         match eff {
+//             // The effect is `ValidVertex` but we want to gossip it to other
+//             // validators so for them it's just `Vertex` that needs to be validated.
+//             Effect::NewVertex(ValidVertex(v)) => HighwayMessage::NewVertex(Box::new(v)),
+//             Effect::ScheduleTimer(t) => HighwayMessage::Timer(t),
+//             Effect::RequestNewBlock(block_context) => HighwayMessage::RequestBlock(block_context),
+//             Effect::WeAreFaulty(fault) => HighwayMessage::WeAreFaulty(Box::new(fault)),
+//             Effect::SignWireUnit(_) => {
+//                 unimplemented!()
+//             }
+//             Effect::SignEndorsement(_) => {
+//                 unimplemented!()
+//             }
+//             Effect::SignPing(_) => {
+//                 unimplemented!()
+//             }
+//         }
+//     }
+// }
 
 impl PartialOrd for HighwayMessage {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -283,7 +307,8 @@ impl HighwayValidator {
                                 }
                                 let secret = TestSecret(wunit2.creator.0.into());
                                 let hwunit2 = wunit2.into_hashed();
-                                let swunit2 = SignedWireUnit::new(hwunit2, &secret);
+                                let hash = hwunit2.hash();
+                                let swunit2 = SignedWireUnit::new(hwunit2, secret.sign(&hash));
                                 let vertex2 = Box::new(Vertex::Unit(swunit2));
                                 vec![msg, HighwayMessage::NewVertex(vertex2)]
                             }
@@ -414,9 +439,11 @@ where
         let messages = res
             .into_iter()
             .flat_map(|eff| {
+                if let Some(msg) = HighwayMessage::from_effect(eff) {
                 validator_node
                     .validator_mut()
-                    .post_hook(delivery_time, HighwayMessage::from(eff))
+                    .post_hook(delivery_time, msg)
+                } else { vec![] }
             })
             .collect();
         Ok(messages)
@@ -938,14 +965,14 @@ impl<DS: DeliveryStrategy> HighwayTestHarnessBuilder<DS> {
                 let v_sec = secrets.remove(&vid).expect("Secret key should exist.");
 
                 let mut highway = Highway::new(instance_id, validators.clone(), params.clone());
-                let effects = highway.activate_validator(vid, v_sec, start_time, None, Weight(ftt));
+                let effects = highway.activate_validator(vid, start_time, None, Weight(ftt));
 
                 let finality_detector = FinalityDetector::new(Weight(ftt));
 
                 (
                     highway,
                     finality_detector,
-                    effects.into_iter().map(HighwayMessage::from).collect_vec(),
+                    effects.into_iter().filter_map(|eff| HighwayMessage::from_effect(eff)).collect_vec(),
                 )
             };
 
@@ -1035,6 +1062,7 @@ impl ValidatorSecret for TestSecret {
     type Hash = HashWrapper;
     type Signature = SignatureWrapper;
 
+    #[cfg(any(feature = "testing", test))]
     fn sign(&self, data: &Self::Hash) -> Self::Signature {
         SignatureWrapper(data.0 + self.0)
     }
@@ -1043,7 +1071,7 @@ impl ValidatorSecret for TestSecret {
 impl Context for TestContext {
     type ConsensusValue = ConsensusValue;
     type ValidatorId = ValidatorId;
-    type ValidatorSecret = TestSecret;
+    // type ValidatorSecret = TestSecret;
     type Signature = SignatureWrapper;
     type Hash = HashWrapper;
     type InstanceId = u64;
@@ -1057,7 +1085,7 @@ impl Context for TestContext {
     fn verify_signature(
         hash: &Self::Hash,
         public_key: &Self::ValidatorId,
-        signature: &<Self::ValidatorSecret as ValidatorSecret>::Signature,
+        signature: &Self::Signature,
     ) -> bool {
         let computed_signature = hash.0 + public_key.0;
         computed_signature == signature.0

@@ -13,7 +13,7 @@ use serde::{
 use strum::EnumDiscriminants;
 
 use casper_types::{
-    crypto, AsymmetricType, Chainspec, Digest, ProtocolVersion, PublicKey, Signature, Signer,
+    crypto, AsymmetricType, Chainspec, Digest, ProtocolVersion, PublicKey, Signature,
 };
 #[cfg(test)]
 use casper_types::{testing::TestRng, SecretKey};
@@ -160,11 +160,12 @@ impl ConsensusCertificate {
         connection_id: ConnectionId,
         node_signer: &Arc<NodeSigner>,
     ) -> Result<Self, NodeSignerError> {
-        let signature = node_signer.sign_bytes(connection_id.as_bytes())?;
-        Ok(ConsensusCertificate {
-            public_key: node_signer.public_signing_key(),
-            signature,
-        })
+        // let signature = node_signer.sign_bytes(connection_id.as_bytes())?;
+        // Ok(ConsensusCertificate {
+        //     public_key: node_signer.public_signing_key(),
+        //     signature,
+        // })
+        unimplemented!()
     }
 
     /// Validates a certificate, returning a `PublicKey` if valid.

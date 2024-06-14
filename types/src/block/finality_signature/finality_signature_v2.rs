@@ -307,8 +307,8 @@ mod tests {
         let block = TestBlockBuilder::new().build(rng);
         // Signature should be over block hash, block height, era id and chain name hash.
         let signer = TestSigner::random(rng);
-        let block_hash = block.hash();
-        let block_height = block.height();
+        // let block_hash = *block.hash();
+        // let block_height = block.height();
         let era_id = EraId::from(1);
         let chain_name_hash = ChainNameDigest::from_chain_name("example");
         let finality_signature = signer.create_finality_signature(

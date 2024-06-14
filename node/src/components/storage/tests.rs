@@ -38,6 +38,7 @@ use super::{
 };
 use crate::{
     components::fetcher::{FetchItem, FetchResponse},
+    consensus::ValidatorSecret,
     effect::{
         requests::{MarkBlockCompletedRequest, StorageRequest},
         Multiple,
@@ -146,15 +147,25 @@ fn create_sync_leap_test_chain(
             &mut storage,
             Arc::new(block.clone())
         ));
+        let block_hash = *block.hash();
+        let block_height = block.height();
+        let era_id = block.era_id();
+        let chainspec_name_hash = chainspec.name_hash();
 
-        let fs = FinalitySignatureV2::create(
-            *block.hash(),
-            block.height(),
-            block.era_id(),
+        let signature = signer.get_signature_sync(FinalitySignatureV2::bytes_to_sign(
+            block_hash,
+            block_height,
+            era_id,
+            chainspec_name_hash,
+        ));
+        let fs = FinalitySignatureV2::new(
+            block_hash,
+            block_height,
+            era_id,
             chainspec.name_hash(),
-            &*signer,
-        )
-        .expect("should create finality signature");
+            signature,
+            signer.public_signing_key(),
+        );
         assert!(fs.is_verified().is_ok());
 
         let mut block_signatures = BlockSignaturesV2::new(
@@ -288,15 +299,24 @@ fn random_signatures(
         BlockSignaturesV2::new(block_hash, block_height, era_id, chain_name_hash);
     for _ in 0..3 {
         let signer = NodeSigner::mock(SecretKey::random(rng));
-        let signature = FinalitySignatureV2::create(
+        let signature = signer.get_signature_sync(FinalitySignatureV2::bytes_to_sign(
             block_hash,
             block_height,
             era_id,
             chain_name_hash,
-            &*signer,
-        )
-        .expect("should create finality signature");
-        block_signatures.insert_signature(signature.public_key().clone(), *signature.signature());
+        ));
+        let finality_signature = FinalitySignatureV2::new(
+            block_hash,
+            block_height,
+            era_id,
+            chain_name_hash,
+            signature,
+            signer.public_signing_key(),
+        );
+        block_signatures.insert_signature(
+            finality_signature.public_key().clone(),
+            *finality_signature.signature(),
+        );
     }
     block_signatures.into()
 }

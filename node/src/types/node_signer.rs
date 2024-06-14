@@ -1,7 +1,11 @@
 use std::sync::Arc;
 
-use casper_types::{crypto, crypto::Signer, Digest, ErrorExt, PublicKey, SecretKey, Signature};
+use casper_types::{
+    crypto, BlockV2, ChainNameDigest, Digest, ErrorExt, FinalitySignatureV2, PublicKey, SecretKey,
+    Signature,
+};
 use datasize::DataSize;
+use reqwest::Client;
 use serde::Serialize;
 use thiserror::Error;
 
@@ -45,33 +49,64 @@ impl NodeSigner {
         Arc::new(Self::Local(local_signer))
     }
 
+    pub fn public_signing_key(&self) -> PublicKey {
+        match self {
+            NodeSigner::Local(local_signer) => local_signer.public_key.clone(),
+            NodeSigner::Remote(remote_signer) => remote_signer.public_key.clone(),
+        }
+    }
+
     pub async fn get_signature<T: AsRef<[u8]>>(
         &self,
         bytes: T,
     ) -> Result<Signature, crypto::Error> {
-        self.sign_bytes(bytes)
-    }
-}
-
-impl Signer for NodeSigner {
-    fn public_signing_key(&self) -> PublicKey {
         match self {
-            NodeSigner::Local(local_signer) => local_signer.public_key.clone(),
+            NodeSigner::Local(local_signer) => Ok(local_signer.sign(bytes)),
             NodeSigner::Remote(_remote_signer) => {
                 unimplemented!()
             }
         }
     }
 
-    fn sign_bytes<T: AsRef<[u8]>>(&self, message: T) -> Result<Signature, crypto::Error> {
+    /// Generate a signature from local signer as a blocking operation.
+    #[cfg(any(feature = "testing", test))]
+    pub fn get_signature_sync<T: AsRef<[u8]>>(&self, bytes: T) -> Signature {
         match self {
-            NodeSigner::Local(local_signer) => Ok(crypto::sign(
-                message,
-                &local_signer.secret_key,
-                &local_signer.public_key,
-            )),
-            NodeSigner::Remote(_remote_signer) => {
-                unimplemented!()
+            NodeSigner::Local(local_signer) => local_signer.sign(bytes),
+            NodeSigner::Remote(_) => {
+                panic!("test signature generation shouldn't be called for a remote signer")
+            }
+        }
+    }
+
+    #[cfg(any(feature = "testing", test))]
+    pub fn create_finality_signature(
+        &self,
+        block: Arc<BlockV2>,
+        chain_name_hash: ChainNameDigest,
+    ) -> FinalitySignatureV2 {
+        match self {
+            NodeSigner::Local(local_signer) => {
+                let block_hash = *block.hash();
+                let block_height = block.height();
+                let era_id = block.era_id();
+                let signature = local_signer.sign(FinalitySignatureV2::bytes_to_sign(
+                    block_hash,
+                    block_height,
+                    era_id,
+                    chain_name_hash,
+                ));
+                FinalitySignatureV2::new(
+                    block_hash,
+                    block_height,
+                    era_id,
+                    chain_name_hash,
+                    signature,
+                    self.public_signing_key(),
+                )
+            }
+            NodeSigner::Remote(_) => {
+                panic!("test signature generation shouldn't be called for a remote signer")
             }
         }
     }
@@ -81,8 +116,9 @@ impl ValidatorSecret for Arc<NodeSigner> {
     type Hash = Digest;
     type Signature = Signature;
 
+    #[cfg(any(feature = "testing", test))]
     fn sign(&self, hash: &Self::Hash) -> Self::Signature {
-        self.sign_bytes(hash).unwrap()
+        self.get_signature_sync(hash)
     }
 }
 
@@ -108,6 +144,10 @@ impl LocalSigner {
             public_key,
             secret_key,
         }
+    }
+
+    pub fn sign<T: AsRef<[u8]>>(&self, bytes: T) -> Signature {
+        crypto::sign(bytes, &self.secret_key, &self.public_key)
     }
 }
 

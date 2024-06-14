@@ -17,9 +17,7 @@ use crate::{
     effect::{EffectBuilder, EffectExt, Effects},
     reactor::main_reactor::MainEvent,
 };
-use casper_types::{
-    BlockHeaderV2, ChainNameDigest, EraId, FinalitySignatureV2, PublicKey, Signer, U512,
-};
+use casper_types::{BlockHeaderV2, ChainNameDigest, EraId, FinalitySignatureV2, PublicKey, U512};
 
 use super::{NodeSigner, NodeSignerError};
 

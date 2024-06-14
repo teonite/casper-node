@@ -36,6 +36,8 @@ use crate::{
         utils::{Validators, Weight},
         ActionId, BlockContext, SerializedMessage, TimerId,
     },
+    effect::Effects,
+    reactor::main_reactor::MainEvent,
     types::NodeId,
     NodeRng,
 };
@@ -150,6 +152,9 @@ impl From<ProtocolOutcome<TestContext>> for ZugMessage {
             ProtocolOutcome::Disconnect(sender) => ZugMessage::Disconnect(sender),
             ProtocolOutcome::HandledProposedBlock(proposed_block) => {
                 ZugMessage::HandledProposedBlock(proposed_block)
+            }
+            ProtocolOutcome::SignMessage(_hash) => {
+                unimplemented!()
             }
         }
     }
@@ -312,7 +317,7 @@ impl ZugValidator {
                                         hash.0.wrapping_add(1),
                                     )),
                                     signed_msg.validator_idx,
-                                    &TestSecret(signed_msg.validator_idx.0.into()),
+                                    // &TestSecret(signed_msg.validator_idx.0.into()),
                                 );
                                 vec![
                                     ZugMessage::GossipMessage(SerializedMessage::from_message(
@@ -327,7 +332,7 @@ impl ZugValidator {
                                     signed_msg.instance_id,
                                     Content::<TestContext>::Vote(!vote),
                                     signed_msg.validator_idx,
-                                    &TestSecret(signed_msg.validator_idx.0.into()),
+                                    // &TestSecret(signed_msg.validator_idx.0.into()),
                                 );
                                 vec![
                                     ZugMessage::GossipMessage(SerializedMessage::from_message(
@@ -903,7 +908,7 @@ impl<DS: DeliveryStrategy> ZugTestHarnessBuilder<DS> {
                 );
                 let tmpdir = tempfile::tempdir().expect("could not create tempdir");
                 let wal_file = tmpdir.path().join("wal_file.dat");
-                let effects = zug.activate_validator(vid, v_sec, start_time, Some(wal_file));
+                let effects = zug.activate_validator(vid, start_time, Some(wal_file));
 
                 (zug, effects.into_iter().map(ZugMessage::from).collect_vec())
             };
@@ -1006,6 +1011,7 @@ impl ValidatorSecret for TestSecret {
     type Hash = HashWrapper;
     type Signature = SignatureWrapper;
 
+    #[cfg(any(feature = "testing", test))]
     fn sign(&self, data: &Self::Hash) -> Self::Signature {
         SignatureWrapper(data.0 + self.0)
     }
@@ -1014,7 +1020,7 @@ impl ValidatorSecret for TestSecret {
 impl Context for TestContext {
     type ConsensusValue = ConsensusValue;
     type ValidatorId = ValidatorId;
-    type ValidatorSecret = TestSecret;
+    // type ValidatorSecret = TestSecret;
     type Signature = SignatureWrapper;
     type Hash = HashWrapper;
     type InstanceId = u64;
@@ -1028,7 +1034,7 @@ impl Context for TestContext {
     fn verify_signature(
         hash: &Self::Hash,
         public_key: &Self::ValidatorId,
-        signature: &<Self::ValidatorSecret as ValidatorSecret>::Signature,
+        signature: &Self::Signature,
     ) -> bool {
         let computed_signature = hash.0 + public_key.0;
         computed_signature == signature.0

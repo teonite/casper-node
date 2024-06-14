@@ -74,7 +74,8 @@ macro_rules! add_unit {
         };
         let hwunit = wunit.into_hashed();
         let hash = hwunit.hash();
-        let swunit = SignedWireUnit::new(hwunit, &TestSecret(($creator).0));
+        let signature = TestSecret(($creator).0).sign(hash);
+        let swunit = SignedWireUnit::new(hwunit, signature);
         $state.add_unit(swunit).map(|()| hash)
     }};
     ($state: ident, $creator: expr, $time: expr, $round_exp: expr, $val: expr; $($obs:expr),*) => {{
@@ -102,7 +103,8 @@ macro_rules! add_unit {
         };
         let hwunit = wunit.into_hashed();
         let hash = hwunit.hash();
-        let swunit = SignedWireUnit::new(hwunit, &TestSecret(($creator).0));
+        let signature = TestSecret(($creator).0).sign(hash);
+        let swunit = SignedWireUnit::new(hwunit, signature);
         $state.add_unit(swunit).map(|()| hash)
     }};
 }
@@ -121,7 +123,7 @@ macro_rules! endorse {
         };
 
         let endorsement: Endorsement<TestContext> = Endorsement::new($vote, ($creator));
-        let signature = TestSecret(($creator).0).sign(&endorsement.hash());
+        let signature = TestSecret(($creator).0).sign(endorsement.hash());
         let endorsements = SignedEndorsement::new(endorsement, signature).into();
         let evidence = $state.find_conflicting_endorsements(&endorsements, &TEST_INSTANCE_ID);
         $state.add_endorsements(endorsements);

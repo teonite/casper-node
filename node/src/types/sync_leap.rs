@@ -495,9 +495,20 @@ mod tests {
                  weight: _,
              }| {
                 let signer = NodeSigner::mock((*secret_key).clone());
-                let fin_sig =
-                    FinalitySignatureV2::create(hash, height, era_id, chain_name_hash, &*signer)
-                        .expect("should create finality signature");
+                let signature = signer.get_signature_sync(FinalitySignatureV2::bytes_to_sign(
+                    hash,
+                    height,
+                    era_id,
+                    chain_name_hash,
+                ));
+                let fin_sig = FinalitySignatureV2::new(
+                    hash,
+                    height,
+                    era_id,
+                    chain_name_hash,
+                    signature,
+                    signer.public_signing_key(),
+                );
                 if add_proofs {
                     block_signatures
                         .insert_signature(fin_sig.public_key().clone(), *fin_sig.signature());

@@ -2,7 +2,7 @@ use super::{registered_sync::RandomId, *};
 
 use std::{collections::BTreeSet, sync::Arc};
 
-use casper_types::{PublicKey, SecretKey, Signer, Timestamp, U512};
+use casper_types::{PublicKey, SecretKey, Timestamp, U512};
 use tempfile::tempdir;
 use tracing::info;
 
@@ -19,6 +19,7 @@ use crate::{
         },
         traits::Context,
     },
+    consensus::ValidatorSecret,
     testing,
     types::{BlockPayload, NodeSigner},
 };
@@ -77,7 +78,13 @@ fn create_signed_message(
 ) -> SignedMessage<ClContext> {
     let validator_idx = validators.get_index(&signer.public_signing_key()).unwrap();
     let instance_id = ClContext::hash(INSTANCE_ID_DATA);
-    SignedMessage::sign_new(round_id, instance_id, content, validator_idx, signer)
+    let signature = signer.sign(&SignedMessage::hash_fields(
+        round_id,
+        &instance_id,
+        &content,
+        validator_idx,
+    ));
+    SignedMessage::new(round_id, instance_id, content, validator_idx, signature)
 }
 
 /// Creates a `Message::Signed`.
@@ -376,12 +383,7 @@ fn zug_no_fault() {
     let dir = tempdir().unwrap();
     sc_c.open_wal(dir.path().join("wal"), timestamp);
 
-    sc_c.activate_validator(
-        CAROL_PUBLIC_KEY.clone(),
-        CAROL_SIGNER.clone(),
-        Timestamp::now(),
-        None,
-    );
+    sc_c.activate_validator(CAROL_PUBLIC_KEY.clone(), Timestamp::now(), None);
 
     let block_time = sc_c.params.min_block_time();
     let proposal_timeout = sc_c.proposal_timeout();

@@ -385,12 +385,9 @@ impl EraSupervisor {
             let signer = self.validator_matrix.signer().clone();
             let instance_id = self.era(era_id).consensus.instance_id();
             let unit_hash_file = self.unit_file(instance_id);
-            self.era_mut(era_id).consensus.activate_validator(
-                our_id,
-                signer,
-                now,
-                Some(unit_hash_file),
-            )
+            self.era_mut(era_id)
+                .consensus
+                .activate_validator(our_id, now, Some(unit_hash_file))
         };
         self.handle_consensus_outcomes(effect_builder, rng, era_id, outcomes)
     }
@@ -574,7 +571,6 @@ impl EraSupervisor {
                 let unit_hash_file = self.unit_file(&instance_id);
                 outcomes.extend(self.era_mut(era_id).consensus.activate_validator(
                     our_id,
-                    signer,
                     now,
                     Some(unit_hash_file),
                 ))
@@ -1271,6 +1267,9 @@ impl EraSupervisor {
                 .set_timeout(Duration::from_millis(FTT_EXCEEDED_SHUTDOWN_DELAY_MILLIS))
                 .then(move |_| fatal!(effect_builder, "too many faulty validators"))
                 .ignore(),
+            ProtocolOutcome::SignMessage(_hash) => {
+                unimplemented!()
+            }
         }
     }
 

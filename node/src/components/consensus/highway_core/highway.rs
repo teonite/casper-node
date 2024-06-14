@@ -4,7 +4,7 @@ mod vertex;
 
 pub(crate) use crate::components::consensus::highway_core::state::Params;
 pub use vertex::{
-    Dependency, Endorsements, HashedWireUnit, Ping, SignedWireUnit, Vertex, WireUnit,
+    Dependency, Endorsements, HashedWireUnit, Ping, PingData, SignedWireUnit, Vertex, WireUnit,
 };
 
 use std::path::PathBuf;
@@ -188,7 +188,7 @@ impl<C: Context> Highway<C> {
     pub(crate) fn activate_validator(
         &mut self,
         id: C::ValidatorId,
-        secret: C::ValidatorSecret,
+        // secret: C::ValidatorSecret,
         current_time: Timestamp,
         unit_hash_file: Option<PathBuf>,
         target_ftt: Weight,
@@ -207,7 +207,7 @@ impl<C: Context> Highway<C> {
         let start_time = current_time.max(self.state.params().start_timestamp());
         let (av, effects) = ActiveValidator::new(
             idx,
-            secret,
+            // secret,
             current_time,
             start_time,
             &self.state,
@@ -557,7 +557,11 @@ impl<C: Context> Highway<C> {
                     result.extend(self.add_valid_vertex(vv.clone(), timestamp))
                 }
                 Effect::WeAreFaulty(_) => self.deactivate_validator(),
-                Effect::ScheduleTimer(_) | Effect::RequestNewBlock(_) => (),
+                Effect::ScheduleTimer(_)
+                | Effect::RequestNewBlock(_)
+                | Effect::SignWireUnit(_)
+                | Effect::SignPing(_)
+                | Effect::SignEndorsement(_) => (),
             }
         }
         result.extend(effects);
@@ -778,18 +782,21 @@ pub(crate) mod tests {
 
     use casper_types::Timestamp;
 
-    use crate::components::consensus::{
-        highway_core::{
-            evidence::{Evidence, EvidenceError},
-            highway::{
-                vertex::Ping, Dependency, Highway, SignedWireUnit, UnitError, Vertex, VertexError,
-                WireUnit,
+    use crate::{
+        components::consensus::{
+            highway_core::{
+                evidence::{Evidence, EvidenceError},
+                highway::{
+                    vertex::Ping, Dependency, Highway, SignedWireUnit, UnitError, Vertex,
+                    VertexError, WireUnit,
+                },
+                highway_testing::TEST_INSTANCE_ID,
+                state::{tests::*, Panorama, State},
             },
-            highway_testing::TEST_INSTANCE_ID,
-            state::{tests::*, Panorama, State},
+            traits::ValidatorSecret,
+            utils::Validators,
         },
-        traits::ValidatorSecret,
-        utils::Validators,
+        consensus::highway_core::highway::PingData,
     };
 
     pub(crate) fn test_validators() -> Validators<u32> {
@@ -836,7 +843,7 @@ pub(crate) mod tests {
         assert_eq!(Err(expected), highway.pre_validate_vertex(invalid_vertex));
 
         let hwunit = wunit.into_hashed();
-        let valid_signature = CAROL_SEC.sign(&hwunit.hash());
+        let valid_signature = CAROL_SEC.sign(hwunit.hash());
         let correct_signature_unit = SignedWireUnit {
             hashed_wire_unit: hwunit,
             signature: valid_signature,
@@ -930,9 +937,11 @@ pub(crate) mod tests {
                         wunit1: &WireUnit<TestContext>,
                         signer1: &TestSecret| {
             let hwunit0 = wunit0.clone().into_hashed();
-            let swunit0 = SignedWireUnit::new(hwunit0, signer0);
+            let sig0 = signer0.sign(hwunit0.hash());
+            let swunit0 = SignedWireUnit::new(hwunit0, sig0);
             let hwunit1 = wunit1.clone().into_hashed();
-            let swunit1 = SignedWireUnit::new(hwunit1, signer1);
+            let sig1 = signer1.sign(hwunit1.hash());
+            let swunit1 = SignedWireUnit::new(hwunit1, sig1);
             let evidence = Evidence::Equivocation(swunit0, swunit1);
             let vertex = Vertex::Evidence(evidence);
             highway
@@ -1025,8 +1034,9 @@ pub(crate) mod tests {
 
         // Ping by validator that is not bonded, with an index that is outside of boundaries of the
         // state.
+        let signature = DAN_SEC.sign(PingData::<TestContext>::hash(DAN, now, TEST_INSTANCE_ID));
         let ping: Vertex<TestContext> =
-            Vertex::Ping(Ping::new(DAN, now, TEST_INSTANCE_ID, &DAN_SEC));
+            Vertex::Ping(Ping::new(DAN, now, TEST_INSTANCE_ID, signature));
         assert!(
             DAN.0 >= WEIGHTS.len() as u32,
             "should use validator that is not bonded"
@@ -1049,12 +1059,17 @@ pub(crate) mod tests {
             active_validator: None,
         };
 
-        let _effects =
-            highway.activate_validator(ALICE.0, ALICE_SEC.clone(), now, None, target_ftt);
+        let _effects = highway.activate_validator(ALICE.0, now, None, target_ftt);
 
-        let ping = Vertex::Ping(Ping::new(ALICE, now, TEST_INSTANCE_ID, &ALICE_SEC));
+        let signature = ALICE_SEC.sign(PingData::<TestContext>::hash(ALICE, now, TEST_INSTANCE_ID));
+        let ping = Vertex::Ping(Ping::new(ALICE, now, TEST_INSTANCE_ID, signature));
         assert!(!highway.is_doppelganger_vertex(&ping));
-        let ping = Vertex::Ping(Ping::new(ALICE, later, TEST_INSTANCE_ID, &ALICE_SEC));
+        let signature = ALICE_SEC.sign(PingData::<TestContext>::hash(
+            ALICE,
+            later,
+            TEST_INSTANCE_ID,
+        ));
+        let ping = Vertex::Ping(Ping::new(ALICE, later, TEST_INSTANCE_ID, signature));
         assert!(highway.is_doppelganger_vertex(&ping));
     }
 }

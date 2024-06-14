@@ -148,8 +148,10 @@ mod tests {
     use num_rational::Ratio;
     use rand::Rng;
 
+    use crate::consensus::tests::utils::ALICE_SIGNER;
     use casper_types::{
-        testing::TestRng, BlockHash, ChainNameDigest, EraId, FinalitySignatureV2, SecretKey, U512,
+        sign, testing::TestRng, BlockHash, ChainNameDigest, EraId, FinalitySignatureV2, SecretKey,
+        U512,
     };
 
     use crate::types::NodeSigner;
@@ -217,14 +219,20 @@ mod tests {
 
         // Signature for the validator #0 weighting 1:
         let (public_0, signer_0) = validators.get(0).unwrap();
-        let finality_signature = FinalitySignatureV2::create(
+        let signature = signer_0.get_signature_sync(FinalitySignatureV2::bytes_to_sign(
             block_hash,
             block_height,
             era_id,
             chain_name_hash,
-            &**signer_0,
-        )
-        .expect("should create finalty signature");
+        ));
+        let finality_signature = FinalitySignatureV2::new(
+            block_hash,
+            block_height,
+            era_id,
+            chain_name_hash,
+            signature,
+            signer_0.public_signing_key(),
+        );
         assert_matches!(
             signature_acquisition.apply_signature(finality_signature.into(), &weights),
             Acceptance::NeededIt
@@ -241,14 +249,20 @@ mod tests {
 
         // Signature for the validator #2 weighting 3:
         let (public_2, signer_2) = validators.get(2).unwrap();
-        let finality_signature = FinalitySignatureV2::create(
+        let signature = signer_2.get_signature_sync(FinalitySignatureV2::bytes_to_sign(
             block_hash,
             block_height,
             era_id,
             chain_name_hash,
-            &**signer_2,
-        )
-        .expect("should create finality signature");
+        ));
+        let finality_signature = FinalitySignatureV2::new(
+            block_hash,
+            block_height,
+            era_id,
+            chain_name_hash,
+            signature,
+            signer_2.public_signing_key(),
+        );
         assert_matches!(
             signature_acquisition.apply_signature(finality_signature.into(), &weights),
             Acceptance::NeededIt
@@ -271,14 +285,20 @@ mod tests {
 
         // Signature for the validator #3 weighting 4:
         let (public_3, signer_3) = validators.get(3).unwrap();
-        let finality_signature = FinalitySignatureV2::create(
+        let signature = signer_3.get_signature_sync(FinalitySignatureV2::bytes_to_sign(
             block_hash,
             block_height,
             era_id,
             chain_name_hash,
-            &**signer_3,
-        )
-        .expect("should create finality signature");
+        ));
+        let finality_signature = FinalitySignatureV2::new(
+            block_hash,
+            block_height,
+            era_id,
+            chain_name_hash,
+            signature,
+            signer_3.public_signing_key(),
+        );
         assert_matches!(
             signature_acquisition.apply_signature(finality_signature.into(), &weights),
             Acceptance::NeededIt
@@ -343,14 +363,20 @@ mod tests {
 
         // Signature for an already stored validator:
         let (_public_0, signer_0) = validators.first().unwrap();
-        let finality_signature = FinalitySignatureV2::create(
+        let signature = signer_0.get_signature_sync(FinalitySignatureV2::bytes_to_sign(
             block_hash,
             block_height,
             era_id,
             chain_name_hash,
-            &**signer_0,
-        )
-        .expect("should create finality signature");
+        ));
+        let finality_signature = FinalitySignatureV2::new(
+            block_hash,
+            block_height,
+            era_id,
+            chain_name_hash,
+            signature,
+            signer_0.public_signing_key(),
+        );
         assert_matches!(
             signature_acquisition.apply_signature(finality_signature.into(), &weights),
             Acceptance::NeededIt
@@ -359,14 +385,20 @@ mod tests {
         // Signature for an unknown validator:
         let (_public, secret) = keypair(rng);
         let signer = NodeSigner::mock(secret);
-        let finality_signature = FinalitySignatureV2::create(
+        let signature = signer.get_signature_sync(FinalitySignatureV2::bytes_to_sign(
             block_hash,
             block_height,
             era_id,
             chain_name_hash,
-            &*signer,
-        )
-        .expect("should create finality signature");
+        ));
+        let finality_signature = FinalitySignatureV2::new(
+            block_hash,
+            block_height,
+            era_id,
+            chain_name_hash,
+            signature,
+            signer.public_signing_key(),
+        );
         assert_matches!(
             signature_acquisition.apply_signature(finality_signature.into(), &weights),
             Acceptance::NeededIt
@@ -399,28 +431,40 @@ mod tests {
         let (_public_0, signer_0) = validators.first().unwrap();
 
         // Signature for an already stored validator:
-        let finality_signature = FinalitySignatureV2::create(
+        let signature = signer_0.get_signature_sync(FinalitySignatureV2::bytes_to_sign(
             block_hash,
             block_height,
             era_id,
             chain_name_hash,
-            &**signer_0,
-        )
-        .expect("should create finality signature");
+        ));
+        let finality_signature = FinalitySignatureV2::new(
+            block_hash,
+            block_height,
+            era_id,
+            chain_name_hash,
+            signature,
+            signer_0.public_signing_key(),
+        );
         assert_matches!(
             signature_acquisition.apply_signature(finality_signature.into(), &weights),
             Acceptance::NeededIt
         );
 
         // Signing again returns `HadIt`:
-        let finality_signature = FinalitySignatureV2::create(
+        let signature = signer_0.get_signature_sync(FinalitySignatureV2::bytes_to_sign(
             block_hash,
             block_height,
             era_id,
             chain_name_hash,
-            &**signer_0,
-        )
-        .expect("should create finality signature");
+        ));
+        let finality_signature = FinalitySignatureV2::new(
+            block_hash,
+            block_height,
+            era_id,
+            chain_name_hash,
+            signature,
+            signer_0.public_signing_key(),
+        );
         assert_matches!(
             signature_acquisition.apply_signature(finality_signature.into(), &weights),
             Acceptance::HadIt
@@ -466,14 +510,20 @@ mod tests {
         );
 
         // Sign it:
-        let finality_signature = FinalitySignatureV2::create(
+        let signature = signer_0.get_signature_sync(FinalitySignatureV2::bytes_to_sign(
             block_hash,
             block_height,
             era_id,
             chain_name_hash,
-            &**signer_0,
-        )
-        .expect("should create finality signature");
+        ));
+        let finality_signature = FinalitySignatureV2::new(
+            block_hash,
+            block_height,
+            era_id,
+            chain_name_hash,
+            signature,
+            signer_0.public_signing_key(),
+        );
         assert_matches!(
             signature_acquisition.apply_signature(finality_signature.into(), &weights),
             Acceptance::NeededIt

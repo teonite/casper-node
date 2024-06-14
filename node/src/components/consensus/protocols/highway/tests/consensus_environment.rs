@@ -27,6 +27,7 @@ use crate::{
         utils::ValidatorIndex,
         LeaderSequence, ProposedBlock, SerializedMessage,
     },
+    consensus::{highway_core::highway::HashedWireUnit, ValidatorSecret},
     types::NodeSigner,
     NodeRng,
 };
@@ -72,8 +73,7 @@ impl ConsensusEnvironment {
         let (pub_key, (signer, _)) = validators.iter().next().unwrap();
         // this is necessary for the round exponent to be tracked - it only happens in the
         // ActiveValidator
-        let _ =
-            highway.activate_validator(pub_key.clone(), signer.clone(), Timestamp::zero(), None);
+        let _ = highway.activate_validator(pub_key.clone(), Timestamp::zero(), None);
         Self {
             highway,
             leaders: LeaderSequence::new(
@@ -383,7 +383,7 @@ impl ConsensusEnvironment {
             let prev_unit_hash = state.panorama().get(creator).unwrap().correct();
             prev_unit_hash.map_or(0, |hash| state.unit(hash).seq_number.saturating_add(1))
         };
-        let wunit: WireUnit<ClContext> = WireUnit {
+        let hwunit: HashedWireUnit<ClContext> = WireUnit {
             panorama: state.panorama().clone(),
             creator,
             instance_id: *self.highway().instance_id(),
@@ -392,8 +392,10 @@ impl ConsensusEnvironment {
             timestamp: (self.current_round_start + delay).into(),
             round_exp: 0,
             endorsed: BTreeSet::new(),
-        };
-        SignedWireUnit::new(wunit.into_hashed(), node_signer)
+        }
+        .into_hashed();
+        let hash = hwunit.hash();
+        SignedWireUnit::new(hwunit, node_signer.sign(&hash))
     }
 
     /// Simulates a proposal being sent by a node other than node 0. This is just a message

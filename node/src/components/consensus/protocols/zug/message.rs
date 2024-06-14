@@ -130,22 +130,39 @@ where
 }
 
 impl<C: Context> SignedMessage<C> {
+    pub fn new(
+        round_id: RoundId,
+        instance_id: C::InstanceId,
+        content: Content<C>,
+        validator_idx: ValidatorIndex,
+        signature: C::Signature,
+    ) -> SignedMessage<C> {
+        Self {
+            round_id,
+            instance_id,
+            content,
+            validator_idx,
+            signature,
+        }
+    }
+
     /// Creates a new signed message with a valid signature.
     pub(crate) fn sign_new(
         round_id: RoundId,
         instance_id: C::InstanceId,
         content: Content<C>,
         validator_idx: ValidatorIndex,
-        secret: &C::ValidatorSecret,
+        // secret: &C::ValidatorSecret,
     ) -> SignedMessage<C> {
         let hash = Self::hash_fields(round_id, &instance_id, &content, validator_idx);
-        SignedMessage {
-            round_id,
-            instance_id,
-            content,
-            validator_idx,
-            signature: secret.sign(&hash),
-        }
+        // SignedMessage {
+        //     round_id,
+        //     instance_id,
+        //     content,
+        //     validator_idx,
+        //     signature: secret.sign(&hash),
+        // }
+        unimplemented!()
     }
 
     /// Creates a new signed message with the alternative content and signature.
@@ -169,7 +186,7 @@ impl<C: Context> SignedMessage<C> {
     }
 
     /// Returns the hash of all fields except the signature.
-    fn hash_fields(
+    pub fn hash_fields(
         round_id: RoundId,
         instance_id: &C::InstanceId,
         content: &Content<C>,
