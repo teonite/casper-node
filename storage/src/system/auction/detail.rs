@@ -535,8 +535,15 @@ static DELEGATOR_2: Lazy<PublicKey> = Lazy::new(|| {
 });
 
 // TODO(jck)
-fn is_on_whitelist(delegator: &PublicKey, _bid: &ValidatorBid) -> bool {
+fn is_on_whitelist(delegator: &PublicKey, bid: &ValidatorBid) -> bool {
     *delegator == DELEGATOR_2.clone()
+    // let bids = read_whitelist_bids(provider, bid.validator_public_key()).unwrap();
+    // for bid_delegator in bids {
+    //     if bid_delegator == delegator {
+    //         return true
+    //     }
+    // }
+    // false
 }
 
 /// If specified validator exists, and if validator is not yet at max delegators count, processes
@@ -701,6 +708,28 @@ where
     Ok(ret)
 }
 
+pub fn read_whitelist_bids<P>(
+    provider: &mut P,
+    validator_public_key: &PublicKey,
+) -> Result<Vec<Delegator>, Error>
+where
+    P: RuntimeProvider + StorageProvider + ?Sized,
+{
+    let mut ret = vec![];
+    let bid_addr = BidAddr::from(validator_public_key.clone());
+    let whitelist_bid_keys = provider.get_keys_by_prefix(
+        &bid_addr
+            .whitelist_prefix()
+            .map_err(|_| Error::Serialization)?,
+    )?;
+    for whitelist_bid_key in whitelist_bid_keys {
+        let delegator_bid = read_whitelist_bid(provider, &whitelist_bid_key)?;
+        ret.push(*delegator_bid);
+    }
+
+    Ok(ret)
+}
+
 pub fn read_delegator_bid<P>(provider: &mut P, bid_key: &Key) -> Result<Box<Delegator>, Error>
 where
     P: RuntimeProvider + ?Sized + StorageProvider,
@@ -709,6 +738,20 @@ where
         return Err(Error::InvalidKeyVariant);
     }
     if let Some(BidKind::Delegator(delegator_bid)) = provider.read_bid(bid_key)? {
+        Ok(delegator_bid)
+    } else {
+        Err(Error::DelegatorNotFound)
+    }
+}
+
+pub fn read_whitelist_bid<P>(provider: &mut P, bid_key: &Key) -> Result<Box<Delegator>, Error>
+where
+    P: RuntimeProvider + ?Sized + StorageProvider,
+{
+    if !bid_key.is_bid_addr_key() {
+        return Err(Error::InvalidKeyVariant);
+    }
+    if let Some(BidKind::WhitelistDelegator(delegator_bid)) = provider.read_bid(bid_key)? {
         Ok(delegator_bid)
     } else {
         Err(Error::DelegatorNotFound)

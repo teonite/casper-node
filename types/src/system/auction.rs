@@ -282,6 +282,14 @@ impl BidsExt for Vec<BidKind> {
                         && x.delegator_public_key() == bid_kind.delegator_public_key()
                 })
                 .map(|(idx, _)| idx),
+            BidKind::WhitelistDelegator(_) => self
+                .iter()
+                .find_position(|x| {
+                    x.is_whitelist_delegator()
+                        && x.validator_public_key() == bid_kind.validator_public_key()
+                        && x.delegator_public_key() == bid_kind.delegator_public_key()
+                })
+                .map(|(idx, _)| idx),
             BidKind::Bridge(_) => self
                 .iter()
                 .find_position(|x| {

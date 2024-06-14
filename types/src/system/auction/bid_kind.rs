@@ -26,6 +26,8 @@ pub enum BidKindTag {
     Delegator = 2,
     /// Bridge record.
     Bridge = 3,
+    /// WhitelistDelegator bid
+    WhitelistDelegator = 4,
 }
 
 /// Auction bid variants.
@@ -43,6 +45,8 @@ pub enum BidKind {
     Delegator(Box<Delegator>),
     /// A bridge record pointing to a new `ValidatorBid` after the public key was changed.
     Bridge(Box<Bridge>),
+    // TODO(jck): docstring
+    WhitelistDelegator(Box<Delegator>),
 }
 
 impl BidKind {
@@ -52,6 +56,9 @@ impl BidKind {
             BidKind::Unified(bid) => bid.validator_public_key().clone(),
             BidKind::Validator(validator_bid) => validator_bid.validator_public_key().clone(),
             BidKind::Delegator(delegator_bid) => delegator_bid.validator_public_key().clone(),
+            BidKind::WhitelistDelegator(delegator_bid) => {
+                delegator_bid.validator_public_key().clone()
+            }
             BidKind::Bridge(bridge) => bridge.old_validator_public_key().clone(),
         }
     }
@@ -60,7 +67,10 @@ impl BidKind {
     pub fn new_validator_public_key(&self) -> Option<PublicKey> {
         match self {
             BidKind::Bridge(bridge) => Some(bridge.new_validator_public_key().clone()),
-            BidKind::Unified(_) | BidKind::Validator(_) | BidKind::Delegator(_) => None,
+            BidKind::Unified(_)
+            | BidKind::Validator(_)
+            | BidKind::Delegator(_)
+            | BidKind::WhitelistDelegator(_) => None,
         }
     }
 
@@ -79,6 +89,14 @@ impl BidKind {
                     delegator,
                 }
             }
+            BidKind::WhitelistDelegator(delegator_bid) => {
+                let validator = delegator_bid.validator_public_key().to_account_hash();
+                let delegator = delegator_bid.delegator_public_key().to_account_hash();
+                BidAddr::WhitelistDelegator {
+                    validator,
+                    delegator,
+                }
+            }
             BidKind::Bridge(bridge) => {
                 BidAddr::Validator(bridge.old_validator_public_key().to_account_hash())
             }
@@ -89,7 +107,10 @@ impl BidKind {
     pub fn is_unified(&self) -> bool {
         match self {
             BidKind::Unified(_) => true,
-            BidKind::Validator(_) | BidKind::Delegator(_) | BidKind::Bridge(_) => false,
+            BidKind::Validator(_)
+            | BidKind::Delegator(_)
+            | BidKind::Bridge(_)
+            | BidKind::WhitelistDelegator(_) => false,
         }
     }
 
@@ -97,7 +118,10 @@ impl BidKind {
     pub fn is_validator(&self) -> bool {
         match self {
             BidKind::Validator(_) => true,
-            BidKind::Unified(_) | BidKind::Delegator(_) | BidKind::Bridge(_) => false,
+            BidKind::Unified(_)
+            | BidKind::Delegator(_)
+            | BidKind::Bridge(_)
+            | BidKind::WhitelistDelegator(_) => false,
         }
     }
 
@@ -105,15 +129,31 @@ impl BidKind {
     pub fn is_delegator(&self) -> bool {
         match self {
             BidKind::Delegator(_) => true,
-            BidKind::Unified(_) | BidKind::Validator(_) | BidKind::Bridge(_) => false,
+            BidKind::Unified(_)
+            | BidKind::Validator(_)
+            | BidKind::Bridge(_)
+            | BidKind::WhitelistDelegator(_) => false,
         }
     }
 
+    /// Is this instance a whitelist delegator bid?.
+    pub fn is_whitelist_delegator(&self) -> bool {
+        match self {
+            BidKind::WhitelistDelegator(_) => true,
+            BidKind::Unified(_)
+            | BidKind::Validator(_)
+            | BidKind::Bridge(_)
+            | BidKind::Delegator(_) => false,
+        }
+    }
     /// Is this instance a bridge record?.
     pub fn is_bridge(&self) -> bool {
         match self {
             BidKind::Bridge(_) => true,
-            BidKind::Unified(_) | BidKind::Validator(_) | BidKind::Delegator(_) => false,
+            BidKind::Unified(_)
+            | BidKind::Validator(_)
+            | BidKind::Delegator(_)
+            | BidKind::WhitelistDelegator(_) => false,
         }
     }
 
@@ -124,6 +164,8 @@ impl BidKind {
             BidKind::Validator(validator_bid) => Some(validator_bid.staked_amount()),
             BidKind::Delegator(delegator) => Some(delegator.staked_amount()),
             BidKind::Bridge(_) => None,
+            // TODO(jck): is staked amount valid here?
+            BidKind::WhitelistDelegator(delegator) => Some(delegator.staked_amount()),
         }
     }
 
@@ -133,6 +175,8 @@ impl BidKind {
             BidKind::Unified(bid) => Some(*bid.bonding_purse()),
             BidKind::Validator(validator_bid) => Some(*validator_bid.bonding_purse()),
             BidKind::Delegator(delegator) => Some(*delegator.bonding_purse()),
+            // TODO(jck)
+            BidKind::WhitelistDelegator(delegator) => Some(*delegator.bonding_purse()),
             BidKind::Bridge(_) => None,
         }
     }
@@ -142,6 +186,9 @@ impl BidKind {
         match self {
             BidKind::Unified(_) | BidKind::Validator(_) | BidKind::Bridge(_) => None,
             BidKind::Delegator(delegator) => Some(delegator.delegator_public_key().clone()),
+            BidKind::WhitelistDelegator(delegator) => {
+                Some(delegator.delegator_public_key().clone())
+            }
         }
     }
 
@@ -152,6 +199,8 @@ impl BidKind {
             BidKind::Validator(validator_bid) => validator_bid.inactive(),
             BidKind::Delegator(delegator) => delegator.staked_amount().is_zero(),
             BidKind::Bridge(_) => false,
+            // TOOD(jck)
+            BidKind::WhitelistDelegator(delegator) => delegator.staked_amount().is_zero(),
         }
     }
 
@@ -165,6 +214,8 @@ impl BidKind {
             BidKind::Validator(validator_bid) => validator_bid.is_locked(timestamp_millis),
             BidKind::Delegator(delegator) => delegator.is_locked(timestamp_millis),
             BidKind::Bridge(_) => false,
+            // TODO(jck)
+            BidKind::WhitelistDelegator(delegator) => delegator.is_locked(timestamp_millis),
         }
     }
 
@@ -185,6 +236,9 @@ impl BidKind {
             BidKind::Delegator(delegator) => delegator
                 .is_locked_with_vesting_schedule(timestamp_millis, vesting_schedule_period_millis),
             BidKind::Bridge(_) => false,
+            // TODO(jck)
+            BidKind::WhitelistDelegator(delegator) => delegator
+                .is_locked_with_vesting_schedule(timestamp_millis, vesting_schedule_period_millis),
         }
     }
 
@@ -196,6 +250,8 @@ impl BidKind {
             BidKind::Validator(validator_bid) => validator_bid.vesting_schedule(),
             BidKind::Delegator(delegator) => delegator.vesting_schedule(),
             BidKind::Bridge(_) => None,
+            // TODO(jck)
+            BidKind::WhitelistDelegator(delegator) => delegator.vesting_schedule(),
         }
     }
 
@@ -206,6 +262,7 @@ impl BidKind {
             BidKind::Validator(_) => BidKindTag::Validator,
             BidKind::Delegator(_) => BidKindTag::Delegator,
             BidKind::Bridge(_) => BidKindTag::Bridge,
+            BidKind::WhitelistDelegator(_) => BidKindTag::WhitelistDelegator,
         }
     }
 
@@ -213,7 +270,10 @@ impl BidKind {
     pub fn era_id(&self) -> Option<EraId> {
         match self {
             BidKind::Bridge(bridge) => Some(*bridge.era_id()),
-            BidKind::Unified(_) | BidKind::Validator(_) | BidKind::Delegator(_) => None,
+            BidKind::Unified(_)
+            | BidKind::Validator(_)
+            | BidKind::Delegator(_)
+            | BidKind::WhitelistDelegator(_) => None,
         }
     }
 }
@@ -225,6 +285,7 @@ impl ToBytes for BidKind {
             BidKind::Unified(bid) => (BidKindTag::Unified, bid.to_bytes()?),
             BidKind::Validator(validator_bid) => (BidKindTag::Validator, validator_bid.to_bytes()?),
             BidKind::Delegator(delegator_bid) => (BidKindTag::Delegator, delegator_bid.to_bytes()?),
+            BidKind::WhitelistDelegator(delegator_bid) => (BidKindTag::WhitelistDelegator, delegator_bid.to_bytes()?),
             BidKind::Bridge(bridge) => (BidKindTag::Bridge, bridge.to_bytes()?),
         };
         result.push(tag as u8);
@@ -238,6 +299,7 @@ impl ToBytes for BidKind {
                 BidKind::Unified(bid) => bid.serialized_length(),
                 BidKind::Validator(validator_bid) => validator_bid.serialized_length(),
                 BidKind::Delegator(delegator_bid) => delegator_bid.serialized_length(),
+                BidKind::WhitelistDelegator(delegator_bid) => delegator_bid.serialized_length(),
                 BidKind::Bridge(bridge) => bridge.serialized_length(),
             }
     }
@@ -249,6 +311,7 @@ impl ToBytes for BidKind {
             BidKind::Unified(bid) => bid.write_bytes(writer)?,
             BidKind::Validator(validator_bid) => validator_bid.write_bytes(writer)?,
             BidKind::Delegator(delegator_bid) => delegator_bid.write_bytes(writer)?,
+            BidKind::WhitelistDelegator(delegator_bid) => delegator_bid.write_bytes(writer)?,
             BidKind::Bridge(bridge) => bridge.write_bytes(writer)?,
         };
         Ok(())

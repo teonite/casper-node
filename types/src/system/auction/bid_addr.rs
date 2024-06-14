@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 const UNIFIED_TAG: u8 = 0;
 const VALIDATOR_TAG: u8 = 1;
 const DELEGATOR_TAG: u8 = 2;
+const WHITELIST_DELEGATOR_TAG: u8 = 3;
 
 /// Serialization tag for BidAddr variants.
 #[derive(
@@ -37,6 +38,8 @@ pub enum BidAddrTag {
     Validator = VALIDATOR_TAG,
     /// BidAddr for delegator bid.
     Delegator = DELEGATOR_TAG,
+    /// BidAddr for whitelist delegator bid.
+    WhitelistDelegator = WHITELIST_DELEGATOR_TAG,
 }
 
 impl Display for BidAddrTag {
@@ -45,6 +48,7 @@ impl Display for BidAddrTag {
             BidAddrTag::Unified => UNIFIED_TAG,
             BidAddrTag::Validator => VALIDATOR_TAG,
             BidAddrTag::Delegator => DELEGATOR_TAG,
+            BidAddrTag::WhitelistDelegator => WHITELIST_DELEGATOR_TAG,
         };
         write!(f, "{}", base16::encode_lower(&[tag]))
     }
@@ -82,6 +86,13 @@ pub enum BidAddr {
     Validator(AccountHash),
     /// Delegator BidAddr.
     Delegator {
+        /// The validator addr.
+        validator: AccountHash,
+        /// The delegator addr.
+        delegator: AccountHash,
+    },
+    /// Delegator BidAddr.
+    WhitelistDelegator {
         /// The validator addr.
         validator: AccountHash,
         /// The delegator addr.
@@ -144,11 +155,22 @@ impl BidAddr {
         Ok(ret)
     }
 
+    /// Returns the common prefix of all delegators to the cited validator.
+    pub fn whitelist_prefix(&self) -> Result<Vec<u8>, Error> {
+        let validator = self.validator_account_hash();
+        let mut ret = Vec::with_capacity(validator.serialized_length() + 2);
+        ret.push(KeyTag::BidAddr as u8);
+        ret.push(BidAddrTag::WhitelistDelegator as u8);
+        validator.write_bytes(&mut ret)?;
+        Ok(ret)
+    }
+
     /// Validator account hash.
     pub fn validator_account_hash(&self) -> AccountHash {
         match self {
             BidAddr::Unified(account_hash) | BidAddr::Validator(account_hash) => *account_hash,
             BidAddr::Delegator { validator, .. } => *validator,
+            BidAddr::WhitelistDelegator { validator, .. } => *validator,
         }
     }
 
@@ -157,6 +179,7 @@ impl BidAddr {
         match self {
             BidAddr::Unified(_) | BidAddr::Validator(_) => None,
             BidAddr::Delegator { delegator, .. } => Some(*delegator),
+            BidAddr::WhitelistDelegator { delegator, .. } => Some(*delegator),
         }
     }
 
@@ -164,8 +187,20 @@ impl BidAddr {
     /// Else, it is the key for a validator bid record.
     pub fn is_delegator_bid_addr(&self) -> bool {
         match self {
-            BidAddr::Unified(_) | BidAddr::Validator(_) => false,
+            BidAddr::Unified(_) | BidAddr::Validator(_) | BidAddr::WhitelistDelegator { .. } => {
+                false
+            }
             BidAddr::Delegator { .. } => true,
+        }
+    }
+
+    // TODO(jck): docstring
+    /// If true, this instance is the key for a delegator bid record.
+    /// Else, it is the key for a validator bid record.
+    pub fn is_whitelist_delegator_bid_addr(&self) -> bool {
+        match self {
+            BidAddr::Unified(_) | BidAddr::Validator(_) | BidAddr::Delegator { .. } => false,
+            BidAddr::WhitelistDelegator { .. } => true,
         }
     }
 
@@ -179,6 +214,11 @@ impl BidAddr {
                 validator,
                 delegator,
             } => ToBytes::serialized_length(validator) + ToBytes::serialized_length(delegator) + 1,
+            // TOOD(jck): +1?
+            BidAddr::WhitelistDelegator {
+                validator,
+                delegator,
+            } => ToBytes::serialized_length(validator) + ToBytes::serialized_length(delegator) + 1,
         }
     }
 
@@ -188,6 +228,7 @@ impl BidAddr {
             BidAddr::Unified(_) => BidAddrTag::Unified,
             BidAddr::Validator(_) => BidAddrTag::Validator,
             BidAddr::Delegator { .. } => BidAddrTag::Delegator,
+            BidAddr::WhitelistDelegator { .. } => BidAddrTag::WhitelistDelegator,
         }
     }
 }
@@ -267,6 +308,10 @@ impl Display for BidAddr {
                 validator,
                 delegator,
             } => write!(f, "{}{}{}", tag, validator, delegator),
+            BidAddr::WhitelistDelegator {
+                validator,
+                delegator,
+            } => write!(f, "{}{}{}", tag, validator, delegator),
         }
     }
 }
@@ -281,6 +326,12 @@ impl Debug for BidAddr {
                 delegator,
             } => {
                 write!(f, "BidAddr::Delegator({:?}{:?})", validator, delegator)
+            }
+            BidAddr::WhitelistDelegator {
+                validator,
+                delegator,
+            } => {
+                write!(f, "BidAddr::WhitelistDelegator({:?}{:?})", validator, delegator)
             }
         }
     }
