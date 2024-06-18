@@ -135,6 +135,7 @@ impl BidAddr {
         validator: &PublicKey,
         maybe_delegator: Option<&PublicKey>,
     ) -> Self {
+        // TODO(jck): how do we handle WhitelistDelegator variant here?
         if let Some(delegator) = maybe_delegator {
             BidAddr::Delegator {
                 validator: AccountHash::from(validator),
@@ -214,7 +215,7 @@ impl BidAddr {
                 validator,
                 delegator,
             } => ToBytes::serialized_length(validator) + ToBytes::serialized_length(delegator) + 1,
-            // TOOD(jck): +1?
+            // TODO(jck): +1?
             BidAddr::WhitelistDelegator {
                 validator,
                 delegator,
@@ -331,7 +332,11 @@ impl Debug for BidAddr {
                 validator,
                 delegator,
             } => {
-                write!(f, "BidAddr::WhitelistDelegator({:?}{:?})", validator, delegator)
+                write!(
+                    f,
+                    "BidAddr::WhitelistDelegator({:?}{:?})",
+                    validator, delegator
+                )
             }
         }
     }

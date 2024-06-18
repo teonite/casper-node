@@ -11,6 +11,7 @@ mod error;
 mod seigniorage_recipient;
 mod unbonding_purse;
 mod validator_bid;
+mod whitelist_entry;
 mod withdraw_purse;
 
 #[cfg(any(all(feature = "std", feature = "testing"), test))]
@@ -32,6 +33,7 @@ pub use error::Error;
 pub use seigniorage_recipient::SeigniorageRecipient;
 pub use unbonding_purse::UnbondingPurse;
 pub use validator_bid::ValidatorBid;
+pub use whitelist_entry::WhitelistEntry;
 pub use withdraw_purse::WithdrawPurse;
 
 #[cfg(any(feature = "testing", test))]
@@ -100,6 +102,13 @@ pub trait BidsExt {
         validator_public_key: &PublicKey,
         delegator_public_key: &PublicKey,
     ) -> Option<Delegator>;
+
+    /// Returns WhitelistEntry by public keys, if present.
+    fn whitelist_entry_by_public_keys(
+        &self,
+        validator_public_key: &PublicKey,
+        delegator_public_key: &PublicKey,
+    ) -> Option<WhitelistEntry>;
 
     /// Returns true if containing any elements matching the provided validator public key.
     fn contains_validator_public_key(&self, public_key: &PublicKey) -> bool;
@@ -206,6 +215,21 @@ impl BidsExt for Vec<BidKind> {
                 && x.delegator_public_key() == Some(delegator_public_key.clone())
         })? {
             Some(*delegator.clone())
+        } else {
+            None
+        }
+    }
+
+    fn whitelist_entry_by_public_keys(
+        &self,
+        validator_public_key: &PublicKey,
+        delegator_public_key: &PublicKey,
+    ) -> Option<WhitelistEntry> {
+        if let BidKind::WhitelistDelegator(whitelist_entry) = self.iter().find(|x| {
+            &x.validator_public_key() == validator_public_key
+                && x.delegator_public_key() == Some(delegator_public_key.clone())
+        })? {
+            Some(*whitelist_entry.clone())
         } else {
             None
         }

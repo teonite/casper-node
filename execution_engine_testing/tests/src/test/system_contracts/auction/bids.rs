@@ -4216,8 +4216,9 @@ fn should_enforce_max_delegators_per_validator_cap_add_vip_delegator() {
         runtime_args! {
             ARG_VALIDATOR => NON_FOUNDER_VALIDATOR_1_PK.clone(),
             ARG_DELEGATOR => DELEGATOR_2.clone(),
-        }
-    ).build();
+        },
+    )
+    .build();
     builder.exec(whitelist_request).expect_success();
 
     let delegation_request_4 = ExecuteRequestBuilder::standard(

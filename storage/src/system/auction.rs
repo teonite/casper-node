@@ -256,6 +256,7 @@ pub trait Auction:
         &mut self,
         validator_public_key: PublicKey,
         delegator_public_key: PublicKey,
+        max_delegators_per_validator: u32,
     ) -> Result<(), ApiError> {
         if !self.allow_auction_bids() {
             // Validation set rotation might be disabled on some private chains and we should not
@@ -274,6 +275,7 @@ pub trait Auction:
             self,
             validator_public_key,
             delegator_public_key,
+            max_delegators_per_validator,
         )
     }
 

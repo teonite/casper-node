@@ -39,7 +39,9 @@ use crate::{
     package::{EntityVersionKey, EntityVersions, Groups, PackageStatus},
     system::{
         auction::{
-            gens::era_info_arb, Bid, BidAddr, BidKind, DelegationRate, Delegator, UnbondingPurse, ValidatorBid, WhitelistSize, WithdrawPurse, DELEGATION_RATE_DENOMINATOR
+            gens::era_info_arb, Bid, BidAddr, BidKind, DelegationRate, Delegator, UnbondingPurse,
+            ValidatorBid, WhitelistEntry, WhitelistSize, WithdrawPurse,
+            DELEGATION_RATE_DENOMINATOR,
         },
         mint::BalanceHoldAddr,
         SystemEntityType,
@@ -628,6 +630,11 @@ pub(crate) fn delegator_arb() -> impl Strategy<Value = Delegator> {
         )
 }
 
+pub(crate) fn whitelist_entry_arb() -> impl Strategy<Value = WhitelistEntry> {
+    (public_key_arb_no_system(), public_key_arb_no_system())
+        .prop_map(|(delegator_pk, validator_pk)| WhitelistEntry::new(delegator_pk, validator_pk))
+}
+
 fn delegation_rate_arb() -> impl Strategy<Value = DelegationRate> {
     0..=DELEGATION_RATE_DENOMINATOR // Maximum, allowed value for delegation rate.
 }
@@ -698,7 +705,14 @@ pub(crate) fn validator_bid_arb() -> impl Strategy<Value = BidKind> {
         bool::ANY,
     )
         .prop_map(
-            |(validator_public_key, bonding_purse, staked_amount, delegation_rate, whitelist_size, is_locked)| {
+            |(
+                validator_public_key,
+                bonding_purse,
+                staked_amount,
+                delegation_rate,
+                whitelist_size,
+                is_locked,
+            )| {
                 let validator_bid = if is_locked {
                     ValidatorBid::locked(
                         validator_public_key,

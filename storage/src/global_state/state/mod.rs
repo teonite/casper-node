@@ -1109,11 +1109,9 @@ pub trait StateProvider {
             AuctionMethod::AddToWhitelist {
                 validator,
                 delegator,
+                max_delegators_per_validator,
             } => runtime
-                .add_to_whitelist(
-                    validator,
-                    delegator,
-                )
+                .add_to_whitelist(validator, delegator, max_delegators_per_validator)
                 .map(|_| AuctionMethodRet::Unit)
                 .map_err(TrackingCopyError::Api),
             AuctionMethod::ChangeBidPublicKey {

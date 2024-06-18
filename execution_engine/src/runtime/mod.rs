@@ -1000,9 +1000,10 @@ where
                 // TODO(jck): actually add to whitelist
                 let delegator = Self::get_named_argument(runtime_args, auction::ARG_DELEGATOR)?;
                 let validator = Self::get_named_argument(runtime_args, auction::ARG_VALIDATOR)?;
-
+                let max_delegators_per_validator =
+                    self.context.engine_config().max_delegators_per_validator();
                 runtime
-                    .add_to_whitelist(validator, delegator)
+                    .add_to_whitelist(validator, delegator, max_delegators_per_validator)
                     .map_err(Self::reverter)?;
 
                 CLValue::from_t(()).map_err(Self::reverter)

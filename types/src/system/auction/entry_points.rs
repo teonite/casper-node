@@ -10,7 +10,9 @@ use crate::{
     Parameter, PublicKey, U512,
 };
 
-use super::{ARG_NEW_PUBLIC_KEY, ARG_REWARDS_MAP, METHOD_ADD_TO_WHITELIST, METHOD_CHANGE_BID_PUBLIC_KEY};
+use super::{
+    ARG_NEW_PUBLIC_KEY, ARG_REWARDS_MAP, METHOD_ADD_TO_WHITELIST, METHOD_CHANGE_BID_PUBLIC_KEY,
+};
 
 /// Creates auction contract entry points.
 pub fn auction_entry_points() -> EntryPoints {

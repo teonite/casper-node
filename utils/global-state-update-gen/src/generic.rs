@@ -318,6 +318,8 @@ pub fn add_and_remove_bids<T: StateReader>(
                         *delegator_bid.bonding_purse(),
                     )))
                 }
+                // TODO(jck): what should happen to WhitelistDelegator bids?
+                BidKind::WhitelistDelegator(_) => continue,
                 // there should be no need to modify bridge records
                 // since they don't influence the bidding process
                 BidKind::Bridge(_) => continue,

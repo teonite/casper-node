@@ -74,7 +74,6 @@ pub struct CoreConfig {
 
     // /// Whitelist validator slots.
     // pub whitelist_validator_slots: u32,
-
     /// Finality threshold fraction.
     #[cfg_attr(feature = "datasize", data_size(skip))]
     pub finality_threshold_fraction: Ratio<u64>,

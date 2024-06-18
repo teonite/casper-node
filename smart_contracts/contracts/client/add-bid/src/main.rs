@@ -15,7 +15,12 @@ const ARG_DELEGATION_RATE: &str = "delegation_rate";
 const ARG_WHITELIST_SIZE: &str = "whitelist_size";
 const ARG_PUBLIC_KEY: &str = "public_key";
 
-fn add_bid(public_key: PublicKey, bond_amount: U512, delegation_rate: DelegationRate, whitelist_size: WhitelistSize) {
+fn add_bid(
+    public_key: PublicKey,
+    bond_amount: U512,
+    delegation_rate: DelegationRate,
+    whitelist_size: WhitelistSize,
+) {
     let contract_hash = system::get_auction();
     let args = runtime_args! {
         auction::ARG_PUBLIC_KEY => public_key,

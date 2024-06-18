@@ -75,6 +75,10 @@ impl<T: StateReader> StateTracker<T> {
                 delegator.validator_public_key(),
                 Some(delegator.delegator_public_key()),
             ),
+            BidKind::WhitelistDelegator(whitelist_entry) => BidAddr::new_from_public_keys(
+                whitelist_entry.validator_public_key(),
+                Some(whitelist_entry.delegator_public_key()),
+            ),
             BidKind::Bridge(bridge) => BidAddr::from(bridge.old_validator_public_key().clone()),
         };
 
@@ -312,6 +316,14 @@ impl<T: StateReader> StateTracker<T> {
                     }
                 }
             }
+            BidKind::WhitelistDelegator(whitelist_entry) => existing_bids
+                .whitelist_entry_by_public_keys(
+                    whitelist_entry.validator_public_key(),
+                    whitelist_entry.delegator_public_key(),
+                )
+                .map(|existing_validator| {
+                    BidKind::WhitelistDelegator(Box::new(existing_validator))
+                }),
             // avoid modifying bridge records
             BidKind::Bridge(_) => None,
         }

@@ -4,11 +4,7 @@
 extern crate alloc;
 
 use casper_contract::contract_api::{runtime, system};
-use casper_types::{
-    runtime_args,
-    system::auction,
-    PublicKey,
-};
+use casper_types::{runtime_args, system::auction, PublicKey};
 
 fn add_to_whitelist(validator: PublicKey, delegator: PublicKey) {
     // TODO(jck): auction contract?

@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use crate::{
     bytesrepr::{self, FromBytes, ToBytes},
     system::auction::{
-        bid::VestingSchedule, DelegationRate, WhitelistSize, Error, VESTING_SCHEDULE_LENGTH_MILLIS,
+        bid::VestingSchedule, DelegationRate, Error, WhitelistSize, VESTING_SCHEDULE_LENGTH_MILLIS,
     },
     CLType, CLTyped, PublicKey, URef, U512,
 };
