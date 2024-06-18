@@ -121,34 +121,14 @@ impl HighwayMessage {
             // validators so for them it's just `Vertex` that needs to be validated.
             Effect::NewVertex(ValidVertex(v)) => Some(HighwayMessage::NewVertex(Box::new(v))),
             Effect::ScheduleTimer(t) => Some(HighwayMessage::Timer(t)),
-            Effect::RequestNewBlock(block_context) => Some(HighwayMessage::RequestBlock(block_context)),
+            Effect::RequestNewBlock(block_context) => {
+                Some(HighwayMessage::RequestBlock(block_context))
+            }
             Effect::WeAreFaulty(fault) => Some(HighwayMessage::WeAreFaulty(Box::new(fault))),
-            Effect::SignWireUnit(_) | Effect::SignEndorsement(_) | Effect::SignPing(_) => None
+            Effect::SignWireUnit(_) | Effect::SignEndorsement(_) | Effect::SignPing(_) => None,
         }
     }
 }
-
-// impl From<Effect<TestContext>> for HighwayMessage {
-//     fn from(eff: Effect<TestContext>) -> Self {
-//         match eff {
-//             // The effect is `ValidVertex` but we want to gossip it to other
-//             // validators so for them it's just `Vertex` that needs to be validated.
-//             Effect::NewVertex(ValidVertex(v)) => HighwayMessage::NewVertex(Box::new(v)),
-//             Effect::ScheduleTimer(t) => HighwayMessage::Timer(t),
-//             Effect::RequestNewBlock(block_context) => HighwayMessage::RequestBlock(block_context),
-//             Effect::WeAreFaulty(fault) => HighwayMessage::WeAreFaulty(Box::new(fault)),
-//             Effect::SignWireUnit(_) => {
-//                 unimplemented!()
-//             }
-//             Effect::SignEndorsement(_) => {
-//                 unimplemented!()
-//             }
-//             Effect::SignPing(_) => {
-//                 unimplemented!()
-//             }
-//         }
-//     }
-// }
 
 impl PartialOrd for HighwayMessage {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -440,10 +420,10 @@ where
             .into_iter()
             .flat_map(|eff| {
                 if let Some(msg) = HighwayMessage::from_effect(eff) {
-                validator_node
-                    .validator_mut()
-                    .post_hook(delivery_time, msg)
-                } else { vec![] }
+                    validator_node.validator_mut().post_hook(delivery_time, msg)
+                } else {
+                    vec![]
+                }
             })
             .collect();
         Ok(messages)
@@ -972,7 +952,10 @@ impl<DS: DeliveryStrategy> HighwayTestHarnessBuilder<DS> {
                 (
                     highway,
                     finality_detector,
-                    effects.into_iter().filter_map(|eff| HighwayMessage::from_effect(eff)).collect_vec(),
+                    effects
+                        .into_iter()
+                        .filter_map(|eff| HighwayMessage::from_effect(eff))
+                        .collect_vec(),
                 )
             };
 

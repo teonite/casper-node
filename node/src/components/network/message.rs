@@ -155,6 +155,13 @@ pub(crate) struct ConsensusCertificate {
 }
 
 impl ConsensusCertificate {
+    pub fn new(public_key: PublicKey, signature: Signature) -> Self {
+        Self {
+            public_key,
+            signature,
+        }
+    }
+
     /// Creates a new consensus certificate from a connection ID and key pair.
     pub(super) fn create(
         connection_id: ConnectionId,
@@ -179,8 +186,9 @@ impl ConsensusCertificate {
     fn random(rng: &mut TestRng) -> Self {
         let secret_key = SecretKey::random(rng);
         let signer = NodeSigner::mock(secret_key);
-        ConsensusCertificate::create(ConnectionId::random(rng), &signer)
-            .expect("should create random consensus certificate")
+        let connection_id = ConnectionId::random(rng);
+        let signature = signer.get_signature_sync(connection_id.as_bytes());
+        ConsensusCertificate::new(signer.public_signing_key(), signature)
     }
 }
 

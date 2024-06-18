@@ -196,6 +196,9 @@ pub enum ConnectionError {
     /// This is usually a bug.
     #[error("handshake sink/stream could not be reunited")]
     FailedToReuniteHandshakeSinkAndStream,
+    /// Failed to fetch `ConsensusCertificate` signature.
+    #[error("failed to fetch signature")]
+    FailedToFetchSignature,
 }
 
 /// IO operation that can time out or close.

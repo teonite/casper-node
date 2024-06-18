@@ -53,7 +53,9 @@ use super::{
     Transport,
 };
 use crate::{
-    components::network::{framed_transport, BincodeFormat, Config, FromIncoming},
+    components::network::{
+        framed_transport, message::ConsensusCertificate, BincodeFormat, Config, FromIncoming,
+    },
     effect::{
         announcements::PeerBehaviorAnnouncement, requests::NetworkRequest, AutoClosingResponder,
         EffectBuilder,
@@ -468,15 +470,24 @@ where
     let mut encoder = MessagePackFormat;
 
     // Manually encode a handshake.
-    let handshake_message = context
-        .chain_info
-        .create_handshake::<P>(
-            context.public_addr.expect("component not initialized"),
-            context.node_signer.as_ref(),
-            connection_id,
-            context.is_syncing.load(Ordering::SeqCst),
-        )
-        .unwrap();
+    let consensus_certificate = match context.node_signer.as_ref() {
+        Some(signer) => {
+            let signature = signer
+                .get_signature(connection_id.as_bytes())
+                .await
+                .map_err(|_| ConnectionError::FailedToFetchSignature)?;
+            Some(ConsensusCertificate::new(
+                signer.public_signing_key(),
+                signature,
+            ))
+        }
+        None => None,
+    };
+    let handshake_message = context.chain_info.create_handshake::<P>(
+        context.public_addr.expect("component not initialized"),
+        context.is_syncing.load(Ordering::SeqCst),
+        consensus_certificate,
+    );
 
     let serialized_handshake_message = Pin::new(&mut encoder)
         .serialize(&Arc::new(handshake_message))

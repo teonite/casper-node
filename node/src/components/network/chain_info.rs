@@ -3,13 +3,12 @@
 // TODO: This module and `ChainId` should disappear in its entirety and the actual chainspec be made
 // available.
 
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
 
-use crate::types::{NodeSigner, NodeSignerError};
 use casper_types::{Chainspec, Digest, ProtocolVersion};
 use datasize::DataSize;
 
-use super::{counting_format::ConnectionId, message::ConsensusCertificate, Message};
+use super::{message::ConsensusCertificate, Message};
 
 /// Data retained from the chainspec by the networking component.
 ///
@@ -44,22 +43,17 @@ impl ChainInfo {
     pub(super) fn create_handshake<P>(
         &self,
         public_addr: SocketAddr,
-        node_signer: Option<&Arc<NodeSigner>>,
-        connection_id: ConnectionId,
         is_syncing: bool,
-    ) -> Result<Message<P>, NodeSignerError> {
-        let consensus_certificate = match node_signer {
-            None => None,
-            Some(signer) => Some(ConsensusCertificate::create(connection_id, signer)?),
-        };
-        Ok(Message::Handshake {
+        consensus_certificate: Option<ConsensusCertificate>,
+    ) -> Message<P> {
+        Message::Handshake {
             network_name: self.network_name.clone(),
             public_addr,
             protocol_version: self.protocol_version,
             consensus_certificate,
             is_syncing,
             chainspec_hash: Some(self.chainspec_hash),
-        })
+        }
     }
 }
 

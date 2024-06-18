@@ -680,7 +680,8 @@ where
             | ConnectionError::PeerCertificateInvalid(_)
             | ConnectionError::DidNotSendHandshake
             | ConnectionError::InvalidRemoteHandshakeMessage(_)
-            | ConnectionError::InvalidConsensusCertificate(_) => None,
+            | ConnectionError::InvalidConsensusCertificate(_)
+            | ConnectionError::FailedToFetchSignature => None,
 
             // Definitely something we want to avoid.
             ConnectionError::WrongNetwork(peer_network_name) => {
