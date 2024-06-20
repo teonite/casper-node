@@ -36,8 +36,6 @@ use crate::{
         utils::{Validators, Weight},
         ActionId, BlockContext, SerializedMessage, TimerId,
     },
-    effect::Effects,
-    reactor::main_reactor::MainEvent,
     types::NodeId,
     NodeRng,
 };
@@ -79,6 +77,7 @@ enum ZugMessage {
     FttExceeded,
     Disconnect(NodeId),
     HandledProposedBlock(ProposedBlock<TestContext>),
+    SignatureRequest(HashWrapper),
 }
 
 impl ZugMessage {
@@ -153,9 +152,7 @@ impl From<ProtocolOutcome<TestContext>> for ZugMessage {
             ProtocolOutcome::HandledProposedBlock(proposed_block) => {
                 ZugMessage::HandledProposedBlock(proposed_block)
             }
-            ProtocolOutcome::SignMessage(_hash) => {
-                unimplemented!()
-            }
+            ProtocolOutcome::SignMessage(hash) => ZugMessage::SignatureRequest(hash),
         }
     }
 }
@@ -246,7 +243,8 @@ impl ZugValidator {
                     | ZugMessage::ValidateConsensusValue(_, _)
                     | ZugMessage::NewEvidence(_)
                     | ZugMessage::Disconnect(_)
-                    | ZugMessage::HandledProposedBlock(_) => vec![msg],
+                    | ZugMessage::HandledProposedBlock(_)
+                    | ZugMessage::SignatureRequest(_) => vec![msg],
                     ZugMessage::WeAreFaulty => {
                         panic!("validator equivocated unexpectedly");
                     }
@@ -276,7 +274,8 @@ impl ZugValidator {
                     | ZugMessage::ValidateConsensusValue(_, _)
                     | ZugMessage::NewEvidence(_)
                     | ZugMessage::Disconnect(_)
-                    | ZugMessage::HandledProposedBlock(_) => vec![msg],
+                    | ZugMessage::HandledProposedBlock(_)
+                    | ZugMessage::SignatureRequest(_) => vec![msg],
                     ZugMessage::WeAreFaulty => {
                         panic!("validator equivocated unexpectedly");
                     }
@@ -310,14 +309,14 @@ impl ZugValidator {
                             signed_msg @ SignedMessage { content, .. },
                         )) => match content {
                             Content::Echo(hash) => {
-                                let conflicting_message = SignedMessage::sign_new(
+                                let conflicting_message = SignedMessage::new(
                                     signed_msg.round_id,
                                     signed_msg.instance_id,
                                     Content::<TestContext>::Echo(HashWrapper(
                                         hash.0.wrapping_add(1),
                                     )),
                                     signed_msg.validator_idx,
-                                    // &TestSecret(signed_msg.validator_idx.0.into()),
+                                    TestSecret(signed_msg.validator_idx.0.into()).sign(&hash),
                                 );
                                 vec![
                                     ZugMessage::GossipMessage(SerializedMessage::from_message(
@@ -327,12 +326,18 @@ impl ZugValidator {
                                 ]
                             }
                             Content::Vote(vote) => {
-                                let conflicting_message = SignedMessage::sign_new(
+                                let hash = SignedMessage::hash_fields(
+                                    signed_msg.round_id,
+                                    &signed_msg.instance_id,
+                                    &content,
+                                    signed_msg.validator_idx,
+                                );
+                                let conflicting_message = SignedMessage::new(
                                     signed_msg.round_id,
                                     signed_msg.instance_id,
                                     Content::<TestContext>::Vote(!vote),
                                     signed_msg.validator_idx,
-                                    // &TestSecret(signed_msg.validator_idx.0.into()),
+                                    TestSecret(signed_msg.validator_idx.0.into()).sign(&hash),
                                 );
                                 vec![
                                     ZugMessage::GossipMessage(SerializedMessage::from_message(
@@ -371,6 +376,8 @@ where
     vid_to_node_id: HashMap<ValidatorId, NodeId>,
     /// Mapping of node IDs to validator IDs
     node_id_to_vid: HashMap<NodeId, ValidatorId>,
+    /// Mapping of validator IDs to test secrets
+    vid_to_test_secret: HashMap<ValidatorId, TestSecret>,
 }
 
 type TestResult<T> = Result<T, TestRunError>;
@@ -467,7 +474,8 @@ where
             | ZugMessage::SendEvidence(_, _)
             | ZugMessage::WeAreFaulty
             | ZugMessage::DoppelgangerDetected
-            | ZugMessage::FttExceeded => Some(TargetedMessage::new(
+            | ZugMessage::FttExceeded
+            | ZugMessage::SignatureRequest(_) => Some(TargetedMessage::new(
                 create_msg(zm),
                 Target::SingleValidator(creator),
             )),
@@ -631,6 +639,18 @@ where
                         consensus.zug_mut().send_evidence(node_id, &vid)
                     })?
                 }
+                ZugMessage::SignatureRequest(hash) => {
+                    let secret = self
+                        .vid_to_test_secret
+                        .get(&validator_id)
+                        .expect("test secret should exist");
+                    let signature = secret.sign(&hash);
+                    self.call_validator(delivery_time, &validator_id, |consensus| {
+                        consensus
+                            .zug_mut()
+                            .handle_signature_response(hash, signature)
+                    })?
+                }
             }
         };
 
@@ -738,7 +758,8 @@ impl DeliveryStrategy for InstantDeliveryNoDropping {
             | ZugMessage::WeAreFaulty
             | ZugMessage::DoppelgangerDetected
             | ZugMessage::FttExceeded
-            | ZugMessage::SendEvidence(_, _) => {
+            | ZugMessage::SendEvidence(_, _)
+            | ZugMessage::SignatureRequest(_) => {
                 DeliverySchedule::AtInstant(base_delivery_timestamp + TimeDiff::from_millis(1))
             }
         }
@@ -875,7 +896,7 @@ impl<DS: DeliveryStrategy> ZugTestHarnessBuilder<DS> {
 
         trace!("Weights: {:?}", validators.iter().collect::<Vec<_>>());
 
-        let mut secrets = validators
+        let vid_to_test_secret = validators
             .iter()
             .map(|validator| (*validator.id(), TestSecret(validator.id().0)))
             .collect();
@@ -895,23 +916,20 @@ impl<DS: DeliveryStrategy> ZugTestHarnessBuilder<DS> {
         );
 
         // Local function creating an instance of `ZugConsensus` for a single validator.
-        let zug_consensus =
-            |(vid, secrets): (ValidatorId, &mut HashMap<ValidatorId, TestSecret>)| {
-                let v_sec = secrets.remove(&vid).expect("Secret key should exist.");
+        let zug_consensus = |vid: ValidatorId| {
+            let mut zug = Zug::new_with_params(
+                validators.clone(),
+                params.clone(),
+                &self.config,
+                None,
+                0, // random seed
+            );
+            let tmpdir = tempfile::tempdir().expect("could not create tempdir");
+            let wal_file = tmpdir.path().join("wal_file.dat");
+            let effects = zug.activate_validator(vid, start_time, Some(wal_file));
 
-                let mut zug = Zug::new_with_params(
-                    validators.clone(),
-                    params.clone(),
-                    &self.config,
-                    None,
-                    0, // random seed
-                );
-                let tmpdir = tempfile::tempdir().expect("could not create tempdir");
-                let wal_file = tmpdir.path().join("wal_file.dat");
-                let effects = zug.activate_validator(vid, start_time, Some(wal_file));
-
-                (zug, effects.into_iter().map(ZugMessage::from).collect_vec())
-            };
+            (zug, effects.into_iter().map(ZugMessage::from).collect_vec())
+        };
 
         let faulty_num = faulty_weights.len();
 
@@ -926,7 +944,7 @@ impl<DS: DeliveryStrategy> ZugTestHarnessBuilder<DS> {
                 } else {
                     None
                 };
-                let (zug, msgs) = zug_consensus((vid, &mut secrets));
+                let (zug, msgs) = zug_consensus(vid);
                 let zug_consensus = ZugValidator::new(zug, fault);
                 let validator = Node::new(vid, zug_consensus);
                 let qm: Vec<QueueEntry<ZugMessage>> = msgs
@@ -967,6 +985,7 @@ impl<DS: DeliveryStrategy> ZugTestHarnessBuilder<DS> {
             delivery_time_distribution,
             vid_to_node_id,
             node_id_to_vid,
+            vid_to_test_secret,
         };
 
         Ok(zth)
