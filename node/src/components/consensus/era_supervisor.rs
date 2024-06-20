@@ -34,8 +34,8 @@ use casper_binary_port::{ConsensusStatus, ConsensusValidatorChanges};
 
 use casper_types::{
     Approval, AsymmetricType, BlockHash, BlockHeader, Chainspec, ConsensusProtocolName, Digest,
-    DisplayIter, EraId, PublicKey, RewardedSignatures, Timestamp, Transaction, TransactionHash,
-    ValidatorChange,
+    DisplayIter, EraId, PublicKey, RewardedSignatures, Signature, Timestamp, Transaction,
+    TransactionHash, ValidatorChange,
 };
 
 use crate::{
@@ -873,6 +873,21 @@ impl EraSupervisor {
         }
     }
 
+    /// Passes a valid signature response from an external signing service to the relevant consensus
+    /// instance.
+    pub(super) fn handle_signature_response<REv: ReactorEventT>(
+        &mut self,
+        effect_builder: EffectBuilder<REv>,
+        rng: &mut NodeRng,
+        era_id: EraId,
+        hash: Digest,
+        signature: Signature,
+    ) -> Effects<Event> {
+        self.delegate_to_era(effect_builder, rng, era_id, move |consensus, _| {
+            consensus.handle_signature_response(hash, signature)
+        })
+    }
+
     /// Will deactivate voting for the current era.
     /// Does nothing if the current era doesn't exist or is inactive already.
     pub(crate) fn deactivate_current_era(&mut self) -> Result<EraId, String> {
@@ -1267,8 +1282,15 @@ impl EraSupervisor {
                 .set_timeout(Duration::from_millis(FTT_EXCEEDED_SHUTDOWN_DELAY_MILLIS))
                 .then(move |_| fatal!(effect_builder, "too many faulty validators"))
                 .ignore(),
-            ProtocolOutcome::SignMessage(_hash) => {
-                unimplemented!()
+            ProtocolOutcome::SignMessage(hash) => {
+                let signer = self.validator_matrix.signer().clone();
+                async move { signer.get_signature(hash).await }.event(move |result| {
+                    Event::SignatureResponse {
+                        era_id,
+                        hash,
+                        result,
+                    }
+                })
             }
         }
     }

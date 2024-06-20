@@ -107,6 +107,7 @@ use proposal::{HashedProposal, Proposal};
 use round::Round;
 use wal::{Entry, ReadWal, WriteWal};
 
+use crate::consensus::protocols::zug::message::SignedMessageData;
 pub(crate) use message::{Message, SyncRequest};
 
 /// The timer for syncing with a random peer.
@@ -145,6 +146,25 @@ impl Debug for ActiveValidator {
 }
 
 struct FaultySender(NodeId);
+
+#[derive(Debug, DataSize)]
+enum SignatureRequestType<C>
+where
+    C: Context,
+{
+    ProposalEcho(Proposal<C>),
+    GossipMessage,
+}
+
+#[derive(Debug, DataSize)]
+struct PendingSignatureRequest<C>
+where
+    C: Context,
+{
+    request_type: SignatureRequestType<C>,
+    timestamp: Timestamp,
+    message_data: SignedMessageData<C>,
+}
 
 /// Contains the state required for the protocol.
 #[derive(Debug, DataSize)]
@@ -198,9 +218,11 @@ where
     next_scheduled_update: Timestamp,
     /// The write-ahead log to prevent honest nodes from double-signing upon restart.
     write_wal: Option<WriteWal<C>>,
-    /// A map of random IDs -> tipmestamp of when it has been created, allowing to
+    /// A map of random IDs -> timestamp of when it has been created, allowing to
     /// verify that a response has been asked for.
     sent_sync_requests: registered_sync::RegisteredSync,
+    /// List of pending message signature requests.
+    pending_signature_requests: HashMap<C::Hash, PendingSignatureRequest<C>>,
 }
 
 impl<C: Context + 'static> Zug<C> {
@@ -245,9 +267,9 @@ impl<C: Context + 'static> Zug<C> {
 
         Zug {
             leader_sequence,
-            proposals_waiting_for_parent: HashMap::new(),
-            proposals_waiting_for_validation: HashMap::new(),
-            rounds: BTreeMap::new(),
+            proposals_waiting_for_parent: Default::default(),
+            proposals_waiting_for_validation: Default::default(),
+            rounds: Default::default(),
             first_non_finalized_round_id: 0,
             maybe_dirty_round_id: None,
             current_round: 0,
@@ -266,6 +288,7 @@ impl<C: Context + 'static> Zug<C> {
             next_scheduled_update: Timestamp::MAX,
             write_wal: None,
             sent_sync_requests: Default::default(),
+            pending_signature_requests: Default::default(),
         }
     }
 
@@ -631,7 +654,12 @@ impl<C: Context + 'static> Zug<C> {
         self.leader_sequence.leader(u64::from(round_id))
     }
 
-    fn create_message(&mut self, round_id: RoundId, content: Content<C>) -> ProtocolOutcomes<C> {
+    fn create_message(
+        &mut self,
+        round_id: RoundId,
+        content: Content<C>,
+        signature_request_type: SignatureRequestType<C>,
+    ) -> ProtocolOutcomes<C> {
         let validator_idx = if let Some(active_validator) = &self.active_validator {
             active_validator.idx
         } else {
@@ -647,29 +675,31 @@ impl<C: Context + 'static> Zug<C> {
         if already_signed {
             return vec![];
         }
-        let signed_msg = SignedMessage::sign_new(
-            round_id,
-            *self.instance_id(),
-            content,
-            validator_idx,
-            // secret_key,
-        );
-        // We only return the new message if we are able to record it. If that fails we
-        // wouldn't know about our own message after a restart and risk double-signing.
-        if self.record_entry(&Entry::SignedMessage(signed_msg.clone()))
-            && self.add_content(signed_msg.clone())
-        {
-            // Some(signed_msg)
-            unimplemented!()
-        } else {
+        let hash =
+            SignedMessage::hash_fields(round_id, self.instance_id(), &content, validator_idx);
+        let signed_msg_data =
+            SignedMessageData::new(round_id, *self.instance_id(), content, validator_idx);
+        let signature_request = PendingSignatureRequest {
+            request_type: signature_request_type,
+            timestamp: Timestamp::now(),
+            message_data: signed_msg_data,
+        };
+
+        // check if a signature request for given hash exists already
+        if self.pending_signature_requests.contains_key(&hash) {
             debug!(
                 our_idx = self.our_idx(),
                 %round_id,
                 ?content,
-                "couldn't record a signed message in the WAL or add it to the protocol state"
+                "signature request for a given hash exists already"
             );
-            vec![]
-        }
+            return vec![];
+        };
+
+        // store request in pending requests map
+        self.pending_signature_requests
+            .insert(hash, signature_request);
+        vec![ProtocolOutcome::SignMessage(hash)]
     }
 
     /// If we are an active validator and it would be safe for us to sign this message and we
@@ -681,15 +711,8 @@ impl<C: Context + 'static> Zug<C> {
         round_id: RoundId,
         content: Content<C>,
     ) -> ProtocolOutcomes<C> {
-        let maybe_signed_msg = self.create_message(round_id, content);
-        maybe_signed_msg
-            .into_iter()
-            .map(|signed_msg| {
-                // let message = Message::Signed(signed_msg);
-                // ProtocolOutcome::CreatedGossipMessage(SerializedMessage::from_message(&message))
-                unimplemented!()
-            })
-            .collect()
+        // request for a message to be signed
+        self.create_message(round_id, content, SignatureRequestType::GossipMessage)
     }
 
     /// When we receive evidence for a fault, we must notify the rest of the network of this
@@ -1926,35 +1949,14 @@ impl<C: Context + 'static> Zug<C> {
     /// Creates a new proposal message in the current round, and a corresponding signed echo,
     /// inserts them into our protocol state and gossips them.
     fn create_echo_and_proposal(&mut self, proposal: Proposal<C>) -> ProtocolOutcomes<C> {
-        // let round_id = self.current_round;
-        // let hashed_prop = HashedProposal::new(proposal.clone());
-        // let echo_content = Content::Echo(*hashed_prop.hash());
-        // let echo = if let Some(echo) = self.create_message(round_id, echo_content) {
-        //     echo
-        // } else {
-        //     return vec![];
-        // };
-        // let prop_msg = Message::Proposal {
-        //     round_id,
-        //     proposal,
-        //     instance_id: *self.instance_id(),
-        //     echo,
-        // };
-        // if !self.record_entry(&Entry::Proposal(hashed_prop.inner().clone(), round_id)) {
-        //     error!(
-        //         our_idx = self.our_idx(),
-        //         "could not record own proposal in WAL"
-        //     );
-        //     vec![]
-        // } else if self.round_mut(round_id).insert_proposal(hashed_prop) {
-        //     self.mark_dirty(round_id);
-        //     vec![ProtocolOutcome::CreatedGossipMessage(
-        //         SerializedMessage::from_message(&prop_msg),
-        //     )]
-        // } else {
-        //     vec![]
-        // }
-        unimplemented!()
+        let round_id = self.current_round;
+        let hashed_prop = HashedProposal::new(proposal.clone());
+        let echo_content = Content::Echo(*hashed_prop.hash());
+        self.create_message(
+            round_id,
+            echo_content,
+            SignatureRequestType::ProposalEcho(proposal),
+        )
     }
 
     /// Returns a parent if a block with that parent could be proposed in the current round, and the
@@ -2460,6 +2462,75 @@ where
     fn next_round_length(&self) -> Option<TimeDiff> {
         Some(self.params.min_block_time())
     }
+
+    fn handle_signature_response(
+        &mut self,
+        hash: C::Hash,
+        signature: C::Signature,
+    ) -> ProtocolOutcomes<C> {
+        let (signed_msg, request_type) =
+            if let Some(request) = self.pending_signature_requests.remove(&hash) {
+                (request.message_data.sign(signature), request.request_type)
+            } else {
+                // received signature response for unknown hash
+                error!(
+                    our_idx = self.our_idx(),
+                    ?hash,
+                    "received signature response for unknown hash"
+                );
+                return vec![];
+            };
+
+        let round_id = signed_msg.round_id;
+
+        // We only return the new message if we are able to record it. If that fails we
+        // wouldn't know about our own message after a restart and risk double-signing.
+        if !(self.record_entry(&Entry::SignedMessage(signed_msg.clone()))
+            && self.add_content(signed_msg.clone()))
+        {
+            error!(
+                our_idx = self.our_idx(),
+                %round_id,
+                ?signed_msg.content,
+                "couldn't record a signed message in the WAL or add it to the protocol state"
+            );
+            return vec![];
+        };
+
+        match request_type {
+            SignatureRequestType::ProposalEcho(proposal) => {
+                let prop_msg = Message::Proposal {
+                    round_id,
+                    proposal: proposal.clone(),
+                    instance_id: *self.instance_id(),
+                    echo: signed_msg,
+                };
+                if !self.record_entry(&Entry::Proposal(proposal.clone(), round_id)) {
+                    error!(
+                        our_idx = self.our_idx(),
+                        "could not record own proposal in WAL"
+                    );
+                    return vec![];
+                } else if self
+                    .round_mut(round_id)
+                    .insert_proposal(HashedProposal::new(proposal))
+                {
+                    self.mark_dirty(round_id);
+                    vec![ProtocolOutcome::CreatedGossipMessage(
+                        SerializedMessage::from_message(&prop_msg),
+                    )]
+                } else {
+                    vec![]
+                }
+            }
+            SignatureRequestType::GossipMessage => {
+                let message = Message::Signed(signed_msg);
+                return vec![ProtocolOutcome::CreatedGossipMessage(
+                    SerializedMessage::from_message(&message),
+                )];
+            }
+        }
+    }
 }
 
 fn outcomes_or_disconnect<C: Context>(
@@ -2587,12 +2658,12 @@ mod specimen_support {
 
     impl LargestSpecimen for SignedMessage<ClContext> {
         fn largest_specimen<E: SizeEstimator>(estimator: &E, cache: &mut Cache) -> Self {
-            SignedMessage::sign_new(
+            SignedMessage::new(
                 LargestSpecimen::largest_specimen(estimator, cache),
                 LargestSpecimen::largest_specimen(estimator, cache),
                 LargestSpecimen::largest_specimen(estimator, cache),
                 LargestSpecimen::largest_specimen(estimator, cache),
-                // &LargestSpecimen::largest_specimen(estimator, cache),
+                LargestSpecimen::largest_specimen(estimator, cache),
             )
         }
     }

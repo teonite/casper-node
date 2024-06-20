@@ -112,6 +112,48 @@ impl<C: Context> Content<C> {
 // necessarily `Copy` and that breaks the derive.
 impl<C: Context> Copy for Content<C> {}
 
+/// Helper used to store `SignedMessage` content when requesting a signature.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq, Hash, DataSize)]
+#[serde(bound(
+    serialize = "C::Hash: Serialize",
+    deserialize = "C::Hash: Deserialize<'de>",
+))]
+pub(crate) struct SignedMessageData<C>
+where
+    C: Context,
+{
+    pub(super) round_id: RoundId,
+    pub(super) instance_id: C::InstanceId,
+    pub(super) content: Content<C>,
+    pub(super) validator_idx: ValidatorIndex,
+}
+
+impl<C: Context> SignedMessageData<C> {
+    pub fn new(
+        round_id: RoundId,
+        instance_id: C::InstanceId,
+        content: Content<C>,
+        validator_idx: ValidatorIndex,
+    ) -> SignedMessageData<C> {
+        Self {
+            round_id,
+            instance_id,
+            content,
+            validator_idx,
+        }
+    }
+
+    pub(crate) fn sign(&self, signature: C::Signature) -> SignedMessage<C> {
+        SignedMessage::new(
+            self.round_id,
+            self.instance_id,
+            self.content,
+            self.validator_idx,
+            signature,
+        )
+    }
+}
+
 /// A vote or echo with a signature.
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq, Hash, DataSize)]
 #[serde(bound(
@@ -144,25 +186,6 @@ impl<C: Context> SignedMessage<C> {
             validator_idx,
             signature,
         }
-    }
-
-    /// Creates a new signed message with a valid signature.
-    pub(crate) fn sign_new(
-        round_id: RoundId,
-        instance_id: C::InstanceId,
-        content: Content<C>,
-        validator_idx: ValidatorIndex,
-        // secret: &C::ValidatorSecret,
-    ) -> SignedMessage<C> {
-        let hash = Self::hash_fields(round_id, &instance_id, &content, validator_idx);
-        // SignedMessage {
-        //     round_id,
-        //     instance_id,
-        //     content,
-        //     validator_idx,
-        //     signature: secret.sign(&hash),
-        // }
-        unimplemented!()
     }
 
     /// Creates a new signed message with the alternative content and signature.

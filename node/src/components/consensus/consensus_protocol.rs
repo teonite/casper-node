@@ -255,4 +255,11 @@ pub(crate) trait ConsensusProtocol<C: Context>: Send {
 
     // TODO: Make this less Highway-specific.
     fn next_round_length(&self) -> Option<TimeDiff>;
+
+    /// Handles response from external signing service.
+    fn handle_signature_response(
+        &mut self,
+        hash: C::Hash,
+        signature: C::Signature,
+    ) -> ProtocolOutcomes<C>;
 }

@@ -28,9 +28,9 @@ use std::{
 use datasize::DataSize;
 use derive_more::From;
 use serde::{Deserialize, Serialize};
-use tracing::{info, trace};
+use tracing::{error, info, trace};
 
-use casper_types::{BlockHash, BlockHeader, EraId, Timestamp};
+use casper_types::{crypto, BlockHash, BlockHeader, Digest, EraId, Signature, Timestamp};
 
 use crate::{
     components::Component,
@@ -181,6 +181,12 @@ pub(crate) enum Event {
     /// Dump state for debugging purposes.
     #[from]
     DumpState(DumpConsensusStateRequest),
+    /// Received a signature response from `NodeSigner`.
+    SignatureResponse {
+        era_id: EraId,
+        hash: Digest,
+        result: Result<Signature, crypto::Error>,
+    },
 }
 
 impl Debug for ConsensusMessage {
@@ -301,6 +307,11 @@ impl Display for Event {
                 era_id, faulty_num
             ),
             Event::DumpState(req) => Display::fmt(req, f),
+            Event::SignatureResponse { era_id, result, .. } => write!(
+                f,
+                "Received a response from `NodeSigner` in era {}: {:?}",
+                era_id, result
+            ),
         }
     }
 }
@@ -504,6 +515,26 @@ where
                     Ok(dump) => req.answer(Ok(&dump)).ignore(),
                     Err(err) => req.answer(Err(err)).ignore(),
                 }
+            }
+            Event::SignatureResponse {
+                era_id,
+                hash,
+                result,
+            } => {
+                let mut effects = Effects::new();
+                match result {
+                    Ok(signature) => effects.extend(self.handle_signature_response(
+                        effect_builder,
+                        rng,
+                        era_id,
+                        hash,
+                        signature,
+                    )),
+                    Err(err) => {
+                        error!("failed to fetch signature: {err}");
+                    }
+                };
+                effects
             }
         }
     }

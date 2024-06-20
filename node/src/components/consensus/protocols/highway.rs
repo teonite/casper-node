@@ -1136,6 +1136,14 @@ where
     fn next_round_length(&self) -> Option<TimeDiff> {
         self.highway.next_round_length()
     }
+
+    fn handle_signature_response(
+        &mut self,
+        hash: C::Hash,
+        signature: C::Signature,
+    ) -> ProtocolOutcomes<C> {
+        unimplemented!()
+    }
 }
 
 /// Maximum possible rounds in one era.
