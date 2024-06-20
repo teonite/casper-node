@@ -269,12 +269,10 @@ pub trait Auction:
             return Err(Error::InvalidContext.into());
         }
 
-        let source = self.get_main_purse()?;
-
         detail::handle_add_to_whitelist(
             self,
-            validator_public_key,
             delegator_public_key,
+            validator_public_key,
             max_delegators_per_validator,
         )
     }

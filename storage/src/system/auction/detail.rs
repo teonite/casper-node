@@ -678,7 +678,7 @@ where
     }
     .into();
     // let (target, delegator_bid) = if let Some(BidKind::WhitelistDelegator(mut delegator_bid)) =
-    let whitelist_entry = if let Some(BidKind::WhitelistDelegator(mut whitelist_entry)) =
+    let whitelist_entry = if let Some(BidKind::WhitelistDelegator(whitelist_entry)) =
         provider.read_bid(&whitelist_bid_key)?
     {
         // delegator_bid.increase_stake(amount)?;
