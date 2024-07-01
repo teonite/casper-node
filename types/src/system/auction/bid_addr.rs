@@ -135,7 +135,7 @@ impl BidAddr {
         validator: &PublicKey,
         maybe_delegator: Option<&PublicKey>,
     ) -> Self {
-        // TODO(jck): how do we handle WhitelistDelegator variant here?
+        // TODO(jck): how do we handle WhitelistDelegator variant here? match?
         if let Some(delegator) = maybe_delegator {
             BidAddr::Delegator {
                 validator: AccountHash::from(validator),
@@ -156,7 +156,7 @@ impl BidAddr {
         Ok(ret)
     }
 
-    /// Returns the common prefix of all delegators to the cited validator.
+    // TODO(jck): docstring
     pub fn whitelist_prefix(&self) -> Result<Vec<u8>, Error> {
         let validator = self.validator_account_hash();
         let mut ret = Vec::with_capacity(validator.serialized_length() + 2);

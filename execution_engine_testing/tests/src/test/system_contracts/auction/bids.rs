@@ -4215,19 +4215,19 @@ fn should_enforce_max_delegators_per_validator_cap_add_vip_delegator() {
         CONTRACT_ADD_TO_WHITELIST,
         runtime_args! {
             ARG_VALIDATOR => NON_FOUNDER_VALIDATOR_1_PK.clone(),
-            ARG_DELEGATOR => DELEGATOR_2.clone(),
+            ARG_DELEGATOR => DELEGATOR_1.clone(),
         },
     )
     .build();
     builder.exec(whitelist_request).expect_success();
 
     let delegation_request_4 = ExecuteRequestBuilder::standard(
-        *DELEGATOR_2_ADDR,
+        *DELEGATOR_1_ADDR,
         CONTRACT_DELEGATE,
         runtime_args! {
             ARG_AMOUNT => U512::from(DEFAULT_MINIMUM_DELEGATION_AMOUNT),
             ARG_VALIDATOR => NON_FOUNDER_VALIDATOR_1_PK.clone(),
-            ARG_DELEGATOR => DELEGATOR_2.clone(),
+            ARG_DELEGATOR => DELEGATOR_1.clone(),
         },
     )
     .build();

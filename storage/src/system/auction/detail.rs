@@ -544,6 +544,7 @@ where
 {
     // TODO(jck): unwrap
     let bids = read_whitelist_bids(provider, bid.validator_public_key()).unwrap();
+    // let bids = read_whitelist_bids(provider, bid.validator_public_key(), delegator).unwrap();
     for bid_delegator in bids {
         if bid_delegator.delegator_public_key() == delegator {
             return true;
@@ -592,10 +593,8 @@ where
     } else {
         // is this validator over the delegator limit?
         let delegator_count = provider.delegator_count(&validator_bid_addr)?;
-        let whitelist_delegator_count = *bid.whitelist_size();
         // TODO(jck): `fn check_delegator_limit(...)`
-        if delegator_count
-            >= max_delegators_per_validator as usize - whitelist_delegator_count as usize
+        if delegator_count >= max_delegators_per_validator as usize - *bid.whitelist_size() as usize
             && !is_whitelisted(provider, &delegator_public_key, &bid)
         {
             warn!(
@@ -639,6 +638,11 @@ where
     Ok(updated_amount)
 }
 
+fn is_whitelist_full(bid: &ValidatorBid) -> bool {
+    // TODO(jck)
+    false
+}
+
 // TODO(jck): update docstring
 /// If specified validator exists, and if validator is not yet at max delegators count, processes
 /// delegation. For a new delegation a delegator bid record will be created to track the delegation,
@@ -678,40 +682,38 @@ where
     }
     .into();
     // let (target, delegator_bid) = if let Some(BidKind::WhitelistDelegator(mut delegator_bid)) =
-    let whitelist_entry = if let Some(BidKind::WhitelistDelegator(whitelist_entry)) =
-        provider.read_bid(&whitelist_bid_key)?
-    {
-        // delegator_bid.increase_stake(amount)?;
-        // (*whitelist_entry.bonding_purse(), whitelist_entry)
-        *whitelist_entry
-    } else {
-        // is this validator over the delegator limit?
-        let delegator_count = provider.delegator_count(&validator_bid_addr)?;
-        let whitelist_delegator_count = *bid.whitelist_size();
-        // TODO(jck): `fn check_delegator_limit(...)`
-        // TODO(jck): check if whitelist is not full
-        if delegator_count
-            >= max_delegators_per_validator as usize - whitelist_delegator_count as usize
-            && !is_whitelisted(provider, &delegator_public_key, &bid)
-        {
-            warn!(
-                %delegator_count, %max_delegators_per_validator,
-                "delegator_count {}, max_delegators_per_validator {}",
-                delegator_count, max_delegators_per_validator
-            );
-            return Err(Error::ExceededDelegatorSizeLimit.into());
-        }
+    if let Some(BidKind::WhitelistDelegator(_)) = provider.read_bid(&whitelist_bid_key)? {
+        // // delegator_bid.increase_stake(amount)?;
+        // // (*whitelist_entry.bonding_purse(), whitelist_entry)
+        // *whitelist_entry
+        return Ok(());
+    }
+    // } else {
+    // is whitelist full?
+    // let delegator_count = provider.delegator_count(&validator_bid_addr)?;
+    // let whitelist_delegator_count = *bid.whitelist_size();
+    // TODO(jck): `fn check_delegator_limit(...)`
+    // TODO(jck): check if whitelist is not full
+    // if delegator_count
+    //     >= max_delegators_per_validator as usize - whitelist_delegator_count as usize
+    //     && !is_whitelisted(provider, &delegator_public_key, &bid)
+    if is_whitelist_full(&bid) {
+        // TODO(jck): warning msg
+        warn!("whitelist full",);
+        // TODO(jck): Error:WhitelistFull variant
+        return Err(Error::ExceededDelegatorSizeLimit.into());
+    }
 
-        // let bonding_purse = provider.create_purse()?;
-        // let delegator_bid = Delegator::unlocked(
-        //     delegator_public_key,
-        //     amount,
-        //     bonding_purse,
-        //     validator_public_key,
-        // );
-        // (bonding_purse, Box::new(delegator_bid))
-        WhitelistEntry::new(delegator_public_key, validator_public_key)
-    };
+    // let bonding_purse = provider.create_purse()?;
+    // let delegator_bid = Delegator::unlocked(
+    //     delegator_public_key,
+    //     amount,
+    //     bonding_purse,
+    //     validator_public_key,
+    // );
+    // (bonding_purse, Box::new(delegator_bid))
+    // WhitelistEntry::new(delegator_public_key, validator_public_key)
+    // };
 
     // // transfer token to bonding purse
     // provider
@@ -731,6 +733,7 @@ where
     //     })?;
 
     // let updated_amount = delegator_bid.staked_amount();
+    let whitelist_entry = WhitelistEntry::new(delegator_public_key, validator_public_key);
     provider.write_bid(
         whitelist_bid_key,
         BidKind::WhitelistDelegator(Box::new(whitelist_entry)),
@@ -803,12 +806,17 @@ where
 pub fn read_whitelist_bids<P>(
     provider: &mut P,
     validator_public_key: &PublicKey,
+    // delegator_public_key: &PublicKey,
 ) -> Result<Vec<WhitelistEntry>, Error>
 where
     P: RuntimeProvider + StorageProvider + ?Sized,
 {
     let mut ret = vec![];
     let bid_addr = BidAddr::from(validator_public_key.clone());
+    // let bid_addr = BidAddr::WhitelistDelegator {
+    //     validator: validator_public_key.to_account_hash(),
+    //     delegator: delegator_public_key.to_account_hash(),
+    // };
     let whitelist_bid_keys = provider.get_keys_by_prefix(
         &bid_addr
             .whitelist_prefix()
