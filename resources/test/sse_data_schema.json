@@ -2063,13 +2063,6 @@
           ]
         },
         {
-          "description": "TODO(jck): is this required? The `add_to_whitelist` native entry point, used to add a delegator to validator whitelist.",
-          "type": "string",
-          "enum": [
-            "AddToWhitelist"
-          ]
-        },
-        {
           "description": "The `undelegate` native entry point, used to reduce a delegator's stake or remove the delegator if the remaining stake is 0.",
           "type": "string",
           "enum": [
@@ -2095,6 +2088,13 @@
           "type": "string",
           "enum": [
             "ChangeBidPublicKey"
+          ]
+        },
+        {
+          "description": "The `add_to_whitelist` native entry point, used to add delegator to validator's whitelist.",
+          "type": "string",
+          "enum": [
+            "AddToWhitelist"
           ]
         }
       ]
@@ -3264,6 +3264,19 @@
             }
           },
           "additionalProperties": false
+        },
+        {
+          "description": "A bid record whitelisting specific delegator.",
+          "type": "object",
+          "required": [
+            "WhitelistDelegator"
+          ],
+          "properties": {
+            "WhitelistDelegator": {
+              "$ref": "#/definitions/WhitelistEntry"
+            }
+          },
+          "additionalProperties": false
         }
       ]
     },
@@ -3275,7 +3288,8 @@
         "delegation_rate",
         "inactive",
         "staked_amount",
-        "validator_public_key"
+        "validator_public_key",
+        "whitelist_size"
       ],
       "properties": {
         "validator_public_key": {
@@ -3322,6 +3336,12 @@
         "inactive": {
           "description": "`true` if validator has been \"evicted\"",
           "type": "boolean"
+        },
+        "whitelist_size": {
+          "description": "Spots reserved for specific delegators",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
         }
       },
       "additionalProperties": false
@@ -3356,6 +3376,33 @@
           "allOf": [
             {
               "$ref": "#/definitions/EraId"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "WhitelistEntry": {
+      "description": "Represents a validator adding specific delegator to his whitelist",
+      "type": "object",
+      "required": [
+        "delegator_public_key",
+        "validator_public_key"
+      ],
+      "properties": {
+        "delegator_public_key": {
+          "description": "Delegator public key",
+          "allOf": [
+            {
+              "$ref": "#/definitions/PublicKey"
+            }
+          ]
+        },
+        "validator_public_key": {
+          "description": "Validator public key",
+          "allOf": [
+            {
+              "$ref": "#/definitions/PublicKey"
             }
           ]
         }

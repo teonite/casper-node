@@ -32,7 +32,7 @@ pub struct ValidatorBid {
     staked_amount: U512,
     /// Delegation rate
     delegation_rate: DelegationRate,
-    /// Whitelist size
+    /// Spots reserved for specific delegators
     whitelist_size: WhitelistSize,
     /// Vesting schedule for a genesis validator. `None` if non-genesis validator.
     vesting_schedule: Option<VestingSchedule>,

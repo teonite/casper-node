@@ -45,7 +45,7 @@ pub enum BidKind {
     Delegator(Box<Delegator>),
     /// A bridge record pointing to a new `ValidatorBid` after the public key was changed.
     Bridge(Box<Bridge>),
-    // TODO(jck): docstring
+    /// A bid record whitelisting specific delegator.
     WhitelistDelegator(Box<WhitelistEntry>),
 }
 

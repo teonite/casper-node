@@ -12,17 +12,16 @@ use crate::{
     CLType, CLTyped, PublicKey,
 };
 
-/// Represents a party delegating their stake to a validator (or "delegatee")
+/// Represents a validator adding specific delegator to his whitelist
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "datasize", derive(DataSize))]
 #[cfg_attr(feature = "json-schema", derive(JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct WhitelistEntry {
+    /// Delegator public key
     delegator_public_key: PublicKey,
-    // staked_amount: U512,
-    // bonding_purse: URef,
+    /// Validator public key
     validator_public_key: PublicKey,
-    // vesting_schedule: Option<VestingSchedule>,
 }
 
 impl WhitelistEntry {
