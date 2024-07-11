@@ -2155,10 +2155,11 @@ where
                 echo,
             }) => {
                 // TODO: make sure that `echo` is indeed an echo
-                debug!(our_idx, %sender, %proposal, %round_id, "handling proposal with echo");
+                info!(our_idx, %sender, %proposal, %round_id, "handling proposal with echo");
 
                 let outcomes = || {
                     let mut outcomes = self.handle_signed_message(echo, sender, now)?;
+                    debug!("OUTCOMES: {outcomes:?}");
                     outcomes.extend(self.handle_proposal(round_id, proposal, sender, now)?);
                     Ok(outcomes)
                 };

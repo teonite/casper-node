@@ -273,6 +273,25 @@ fn remove_create_new_block(outcomes: &mut ProtocolOutcomes<ClContext>) -> BlockC
     result.expect("missing CreateNewBlock outcome")
 }
 
+/// Finds all `SignMessage` outcomes, generates required signatures
+/// and inserts relevant outcomes.
+fn process_signature_requests(
+    outcomes: &mut ProtocolOutcomes<ClContext>,
+    signer: Arc<NodeSigner>,
+    consensus: &mut Zug<ClContext>,
+) {
+    let mut signature_outcomes = Vec::new();
+    outcomes.retain(|outcome| match outcome {
+        ProtocolOutcome::SignMessage(hash) => {
+            let signature = signer.get_signature_sync(hash);
+            signature_outcomes.extend(consensus.handle_signature_response(*hash, signature));
+            false
+        }
+        _ => true,
+    });
+    outcomes.extend(signature_outcomes);
+}
+
 /// Checks that the `proposals` match the `FinalizedBlock` outcomes.
 fn expect_finalized(
     outcomes: &ProtocolOutcomes<ClContext>,
@@ -432,24 +451,39 @@ fn zug_no_fault() {
 
     // Alice makes a proposal in round 2 with parent in round 1. Alice and Bob echo it.
     let msg = create_proposal_message(2, &proposal2, &validators, &ALICE_SIGNER.clone());
-    expect_no_gossip_block_finalized(sc_c.handle_message(&mut rng, sender, msg, timestamp));
+    let mut outcomes = sc_c.handle_message(&mut rng, sender, msg, timestamp);
+    info!("OUTCOMES: {outcomes:?}");
+    process_signature_requests(&mut outcomes, CAROL_SIGNER.clone(), &mut sc_c);
+    info!("OUTCOMES: {outcomes:?}");
+    expect_no_gossip_block_finalized(outcomes);
     let msg = create_message(&validators, 2, echo(hash2), &BOB_SIGNER.clone());
-    expect_no_gossip_block_finalized(sc_c.handle_message(&mut rng, sender, msg, timestamp));
+    let mut outcomes = sc_c.handle_message(&mut rng, sender, msg, timestamp);
+    process_signature_requests(&mut outcomes, CAROL_SIGNER.clone(), &mut sc_c);
+    expect_no_gossip_block_finalized(outcomes);
 
     // Alice and Bob even vote for it, so the round is committed!
     // But without an accepted parent it isn't finalized yet.
     let msg = create_message(&validators, 2, vote(true), &ALICE_SIGNER.clone());
-    expect_no_gossip_block_finalized(sc_c.handle_message(&mut rng, sender, msg, timestamp));
+    let mut outcomes = sc_c.handle_message(&mut rng, sender, msg, timestamp);
+    process_signature_requests(&mut outcomes, CAROL_SIGNER.clone(), &mut sc_c);
+    expect_no_gossip_block_finalized(outcomes);
     let msg = create_message(&validators, 2, vote(true), &BOB_SIGNER.clone());
-    expect_no_gossip_block_finalized(sc_c.handle_message(&mut rng, sender, msg, timestamp));
+    let mut outcomes = sc_c.handle_message(&mut rng, sender, msg, timestamp);
+    process_signature_requests(&mut outcomes, CAROL_SIGNER.clone(), &mut sc_c);
+    expect_no_gossip_block_finalized(outcomes);
 
     // Alice makes a proposal in round 1 with no parent, and echoes it.
     let msg = create_proposal_message(1, &proposal1, &validators, &ALICE_SIGNER.clone());
-    expect_no_gossip_block_finalized(sc_c.handle_message(&mut rng, sender, msg, timestamp));
+    let mut outcomes = sc_c.handle_message(&mut rng, sender, msg, timestamp);
+    process_signature_requests(&mut outcomes, CAROL_SIGNER.clone(), &mut sc_c);
+    expect_no_gossip_block_finalized(outcomes);
 
     // Now Carol receives Bob's proposal in round 0. Carol echoes it.
     let msg = create_proposal_message(0, &proposal0, &validators, &BOB_SIGNER.clone());
     let mut outcomes = sc_c.handle_message(&mut rng, sender, msg, timestamp);
+    process_signature_requests(&mut outcomes, CAROL_SIGNER.clone(), &mut sc_c);
+
+    info!("{outcomes:?}");
     let mut gossip = remove_gossip(&validators, &mut outcomes);
     assert!(remove_signed(&mut gossip, 0, carol_idx, echo(hash0)));
     assert!(gossip.is_empty(), "unexpected gossip: {:?}", gossip);
