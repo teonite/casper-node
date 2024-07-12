@@ -452,9 +452,7 @@ fn zug_no_fault() {
     // Alice makes a proposal in round 2 with parent in round 1. Alice and Bob echo it.
     let msg = create_proposal_message(2, &proposal2, &validators, &ALICE_SIGNER.clone());
     let mut outcomes = sc_c.handle_message(&mut rng, sender, msg, timestamp);
-    info!("OUTCOMES: {outcomes:?}");
     process_signature_requests(&mut outcomes, CAROL_SIGNER.clone(), &mut sc_c);
-    info!("OUTCOMES: {outcomes:?}");
     expect_no_gossip_block_finalized(outcomes);
     let msg = create_message(&validators, 2, echo(hash2), &BOB_SIGNER.clone());
     let mut outcomes = sc_c.handle_message(&mut rng, sender, msg, timestamp);
@@ -483,7 +481,6 @@ fn zug_no_fault() {
     let mut outcomes = sc_c.handle_message(&mut rng, sender, msg, timestamp);
     process_signature_requests(&mut outcomes, CAROL_SIGNER.clone(), &mut sc_c);
 
-    info!("{outcomes:?}");
     let mut gossip = remove_gossip(&validators, &mut outcomes);
     assert!(remove_signed(&mut gossip, 0, carol_idx, echo(hash0)));
     assert!(gossip.is_empty(), "unexpected gossip: {:?}", gossip);
@@ -498,6 +495,7 @@ fn zug_no_fault() {
 
     // On timeout, Carol votes to make round 0 skippable.
     let mut outcomes = sc_c.handle_timer(timestamp, timestamp, TIMER_ID_UPDATE, &mut rng);
+    process_signature_requests(&mut outcomes, CAROL_SIGNER.clone(), &mut sc_c);
     let mut gossip = remove_gossip(&validators, &mut outcomes);
     assert!(remove_signed(&mut gossip, 0, carol_idx, vote(false)));
     expect_no_gossip_block_finalized(outcomes);
@@ -507,6 +505,7 @@ fn zug_no_fault() {
     // 0 is not skippable round 1 is not yet accepted and thus round 2 is not yet current.
     let msg = create_message(&validators, 0, echo(hash0), &ALICE_SIGNER.clone());
     let mut outcomes = sc_c.handle_message(&mut rng, sender, msg, timestamp);
+    process_signature_requests(&mut outcomes, CAROL_SIGNER.clone(), &mut sc_c);
     let mut gossip = remove_gossip(&validators, &mut outcomes);
     assert!(remove_signed(&mut gossip, 1, carol_idx, echo(hash1)));
     assert!(gossip.is_empty(), "unexpected gossip: {:?}", gossip);
@@ -515,7 +514,9 @@ fn zug_no_fault() {
 
     // Bob votes false in round 0. That's not a quorum yet.
     let msg = create_message(&validators, 0, vote(false), &BOB_SIGNER.clone());
-    expect_no_gossip_block_finalized(sc_c.handle_message(&mut rng, sender, msg, timestamp));
+    let mut outcomes = sc_c.handle_message(&mut rng, sender, msg, timestamp);
+        process_signature_requests(&mut outcomes, CAROL_SIGNER.clone(), &mut sc_c);
+    expect_no_gossip_block_finalized(outcomes);
 
     // On timeout, Carol votes to make round 1 skippable.
     // TODO: Come up with a better test scenario where timestamps are in order.
@@ -525,6 +526,7 @@ fn zug_no_fault() {
         TIMER_ID_UPDATE,
         &mut rng,
     );
+    process_signature_requests(&mut outcomes, CAROL_SIGNER.clone(), &mut sc_c);
     let mut gossip = remove_gossip(&validators, &mut outcomes);
     assert!(remove_signed(&mut gossip, 1, carol_idx, vote(false)));
     assert!(gossip.is_empty(), "unexpected gossip: {:?}", gossip);
@@ -534,6 +536,7 @@ fn zug_no_fault() {
     // Since round 2 became current, Carol echoes the proposal, too.
     let msg = create_message(&validators, 0, vote(false), &ALICE_SIGNER.clone());
     let mut outcomes = sc_c.handle_message(&mut rng, sender, msg, timestamp);
+    process_signature_requests(&mut outcomes, CAROL_SIGNER.clone(), &mut sc_c);
     let mut gossip = remove_gossip(&validators, &mut outcomes);
     assert!(remove_signed(&mut gossip, 2, carol_idx, echo(hash2)));
     assert!(remove_signed(&mut gossip, 2, carol_idx, vote(true)));
@@ -545,6 +548,7 @@ fn zug_no_fault() {
 
     // In round 3 Carol is the leader, so she creates a new block to propose.
     let mut outcomes = sc_c.handle_timer(timestamp, timestamp, TIMER_ID_UPDATE, &mut rng);
+    process_signature_requests(&mut outcomes, CAROL_SIGNER.clone(), &mut sc_c);
     let block_context = remove_create_new_block(&mut outcomes);
     expect_no_gossip_block_finalized(outcomes);
     assert_eq!(block_context.timestamp(), timestamp);
@@ -552,6 +556,7 @@ fn zug_no_fault() {
 
     let proposed_block = ProposedBlock::new(new_payload(false), block_context);
     let mut outcomes = sc_c.propose(proposed_block, timestamp);
+    process_signature_requests(&mut outcomes, CAROL_SIGNER.clone(), &mut sc_c);
     let mut gossip = remove_gossip(&validators, &mut outcomes);
     assert!(remove_proposal(&mut gossip, 3, &proposal3));
     assert!(gossip.is_empty(), "unexpected gossip: {:?}", gossip);
@@ -562,6 +567,7 @@ fn zug_no_fault() {
     // Since the round height is 3, the 4th proposal does not contain a block.
     let msg = create_message(&validators, 3, echo(hash3), &ALICE_SIGNER.clone());
     let mut outcomes = sc_c.handle_message(&mut rng, sender, msg, timestamp);
+    process_signature_requests(&mut outcomes, CAROL_SIGNER.clone(), &mut sc_c);
     let mut gossip = remove_gossip(&validators, &mut outcomes);
     assert!(remove_signed(&mut gossip, 3, carol_idx, vote(true)));
     assert!(remove_proposal(&mut gossip, 4, &proposal4));
@@ -571,6 +577,7 @@ fn zug_no_fault() {
     assert!(!sc_c.finalized_switch_block());
     let msg = create_message(&validators, 3, vote(true), &ALICE_SIGNER.clone());
     let mut outcomes = sc_c.handle_message(&mut rng, sender, msg, timestamp);
+    process_signature_requests(&mut outcomes, CAROL_SIGNER.clone(), &mut sc_c);
     let gossip = remove_gossip(&validators, &mut outcomes);
     assert!(gossip.is_empty(), "unexpected gossip: {:?}", gossip);
     expect_finalized(&outcomes, &[(&proposal3, 2)]);
