@@ -18,7 +18,7 @@ use casper_execution_engine::engine_state::engine_config::DEFAULT_PROTOCOL_VERSI
 use casper_types::{
     system::auction::{
         Bid, BidKind, BidsExt, Delegator, SeigniorageRecipient, SeigniorageRecipientsSnapshot,
-        ValidatorBid,
+        ValidatorBid, ValidatorCredit,
     },
     CLValue, EraId, PublicKey, StoredValue, U512,
 };
@@ -287,7 +287,7 @@ pub fn add_and_remove_bids<T: StateReader>(
         validators_diff.removed.clone()
     };
 
-    for (pub_key, seigniorage_recipient) in new_snapshot.values().rev().next().unwrap() {
+    for (pub_key, seigniorage_recipient) in new_snapshot.values().next_back().unwrap() {
         create_or_update_bid(
             state,
             pub_key,
@@ -308,9 +308,15 @@ pub fn add_and_remove_bids<T: StateReader>(
                     public_key.clone(),
                     *bid.bonding_purse(),
                 ))),
-                BidKind::Validator(validator_bid) => BidKind::Validator(Box::new(
-                    ValidatorBid::empty(public_key.clone(), *validator_bid.bonding_purse()),
-                )),
+                BidKind::Validator(validator_bid) => {
+                    let mut new_bid =
+                        ValidatorBid::empty(public_key.clone(), *validator_bid.bonding_purse());
+                    new_bid.set_delegation_amount_boundaries(
+                        validator_bid.minimum_delegation_amount(),
+                        validator_bid.maximum_delegation_amount(),
+                    );
+                    BidKind::Validator(Box::new(new_bid))
+                }
                 BidKind::Delegator(delegator_bid) => {
                     BidKind::Delegator(Box::new(Delegator::empty(
                         public_key.clone(),
@@ -318,6 +324,13 @@ pub fn add_and_remove_bids<T: StateReader>(
                         *delegator_bid.bonding_purse(),
                     )))
                 }
+                // there should be no need to modify bridge records
+                // since they don't influence the bidding process
+                BidKind::Bridge(_) => continue,
+                BidKind::Credit(credit) => BidKind::Credit(Box::new(ValidatorCredit::empty(
+                    public_key.clone(),
+                    credit.era_id(),
+                ))),
             };
             state.set_bid(reset_bid, slash_instead_of_unbonding);
         }
@@ -340,6 +353,7 @@ fn find_large_bids<T: StateReader>(
         })
         .min()
         .unwrap();
+    let new_validators: BTreeSet<_> = seigniorage_recipients.keys().collect();
 
     let mut ret = BTreeSet::new();
 
@@ -352,11 +366,16 @@ fn find_large_bids<T: StateReader>(
 
     for bid_kind in validator_bids {
         if let BidKind::Unified(bid) = bid_kind {
-            if bid.total_staked_amount().unwrap_or_default() > min_bid {
+            if bid.total_staked_amount().unwrap_or_default() > min_bid
+                && !new_validators.contains(bid.validator_public_key())
+            {
                 ret.insert(bid.validator_public_key().clone());
-                continue;
             }
         } else if let BidKind::Validator(validator_bid) = bid_kind {
+            if new_validators.contains(validator_bid.validator_public_key()) {
+                // The validator is still going to be a validator - we don't remove their bid.
+                continue;
+            }
             if validator_bid.staked_amount() > min_bid {
                 ret.insert(validator_bid.validator_public_key().clone());
                 continue;
@@ -368,7 +387,7 @@ fn find_large_bids<T: StateReader>(
                     x.validator_public_key() == *validator_bid.validator_public_key()
                         && x.is_delegator()
                 })
-                .map(|x| x.staked_amount())
+                .map(|x| x.staked_amount().unwrap())
                 .sum();
 
             let total = validator_bid
@@ -412,6 +431,8 @@ fn create_or_update_bid<T: StateReader>(
                         *bid.delegation_rate(),
                         delegator_stake,
                     ),
+                    0,
+                    u64::MAX,
                 )
             }
             BidKind::Validator(validator_bid) => {
@@ -431,13 +452,17 @@ fn create_or_update_bid<T: StateReader>(
                         *validator_bid.delegation_rate(),
                         delegator_stake,
                     ),
+                    validator_bid.minimum_delegation_amount(),
+                    validator_bid.maximum_delegation_amount(),
                 )
             }
             _ => unreachable!(),
         });
 
     // existing bid
-    if let Some((bonding_purse, existing_recipient)) = maybe_existing_recipient {
+    if let Some((bonding_purse, existing_recipient, min_delegation_amount, max_delegation_amount)) =
+        maybe_existing_recipient
+    {
         if existing_recipient == *updated_recipient {
             return; // noop
         }
@@ -511,6 +536,8 @@ fn create_or_update_bid<T: StateReader>(
             *bonding_purse,
             *updated_recipient.stake(),
             *updated_recipient.delegation_rate(),
+            min_delegation_amount,
+            max_delegation_amount,
         );
 
         state.set_bid(
@@ -522,7 +549,7 @@ fn create_or_update_bid<T: StateReader>(
 
     // new bid
     let stake = *updated_recipient.stake();
-    if stake == U512::zero() {
+    if stake.is_zero() {
         return;
     }
 
@@ -547,6 +574,8 @@ fn create_or_update_bid<T: StateReader>(
         bonding_purse,
         stake,
         *updated_recipient.delegation_rate(),
+        0,
+        u64::MAX,
     );
     state.set_bid(
         BidKind::Validator(Box::new(validator_bid)),

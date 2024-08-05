@@ -117,7 +117,7 @@ impl MainReactor {
                 match self
                     .storage
                     .read_highest_switch_block_headers(1)
-                    .map(|headers| headers.get(0).cloned())
+                    .map(|headers| headers.first().cloned())
                 {
                     Ok(Some(_)) => {
                         // no trusted hash, no local block, no error, must be waiting for genesis
@@ -131,12 +131,10 @@ impl MainReactor {
                         // no trusted hash, no local block, might be genesis
                         self.catch_up_check_genesis()
                     }
-                    Err(storage_err) => {
-                        return Either::Right(CatchUpInstruction::Fatal(format!(
-                            "CatchUp: Could not read storage to find highest switch block header: {}",
-                            storage_err
-                        )));
-                    }
+                    Err(storage_err) => Either::Right(CatchUpInstruction::Fatal(format!(
+                        "CatchUp: Could not read storage to find highest switch block header: {}",
+                        storage_err
+                    ))),
                 }
             }
             Err(err) => Either::Right(CatchUpInstruction::Fatal(format!(

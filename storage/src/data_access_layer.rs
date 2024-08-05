@@ -11,19 +11,25 @@ pub mod auction;
 pub mod balance;
 mod balance_hold;
 pub mod bids;
+mod block_global;
 pub mod block_rewards;
+mod entry_points;
 pub mod era_validators;
 mod execution_results_checksum;
 mod fee;
 mod flush;
+pub mod forced_undelegate;
 mod genesis;
 pub mod handle_fee;
 mod handle_refund;
+mod key_prefix;
 pub mod mint;
+pub mod prefixed_values;
 mod protocol_upgrade;
 pub mod prune;
 pub mod query;
 mod round_seigniorage;
+mod seigniorage_recipients;
 pub mod step;
 mod system_entity_registry;
 pub mod tagged_values;
@@ -41,7 +47,9 @@ pub use balance_hold::{
     InsufficientBalanceHandling,
 };
 pub use bids::{BidsRequest, BidsResult};
+pub use block_global::{BlockGlobalKind, BlockGlobalRequest, BlockGlobalResult};
 pub use block_rewards::{BlockRewardsError, BlockRewardsRequest, BlockRewardsResult};
+pub use entry_points::{EntryPointsRequest, EntryPointsResult};
 pub use era_validators::{EraValidatorsRequest, EraValidatorsResult};
 pub use execution_results_checksum::{
     ExecutionResultsChecksumRequest, ExecutionResultsChecksumResult,
@@ -52,11 +60,13 @@ pub use flush::{FlushRequest, FlushResult};
 pub use genesis::{GenesisRequest, GenesisResult};
 pub use handle_fee::{HandleFeeMode, HandleFeeRequest, HandleFeeResult};
 pub use handle_refund::{HandleRefundMode, HandleRefundRequest, HandleRefundResult};
+pub use key_prefix::KeyPrefix;
 pub use mint::{TransferRequest, TransferResult};
 pub use protocol_upgrade::{ProtocolUpgradeRequest, ProtocolUpgradeResult};
 pub use prune::{PruneRequest, PruneResult};
 pub use query::{QueryRequest, QueryResult};
 pub use round_seigniorage::{RoundSeigniorageRateRequest, RoundSeigniorageRateResult};
+pub use seigniorage_recipients::{SeigniorageRecipientsRequest, SeigniorageRecipientsResult};
 pub use step::{EvictItem, RewardItem, SlashItem, StepError, StepRequest, StepResult};
 pub use system_entity_registry::{
     SystemEntityRegistryPayload, SystemEntityRegistryRequest, SystemEntityRegistryResult,
@@ -120,8 +130,8 @@ where
         self.state.flush(request)
     }
 
-    fn checkout(&self, state_hash: Digest) -> Result<Option<Self::Reader>, GlobalStateError> {
-        self.state.checkout(state_hash)
+    fn empty_root(&self) -> Digest {
+        self.state.empty_root()
     }
 
     fn tracking_copy(
@@ -134,8 +144,8 @@ where
         }
     }
 
-    fn empty_root(&self) -> Digest {
-        self.state.empty_root()
+    fn checkout(&self, state_hash: Digest) -> Result<Option<Self::Reader>, GlobalStateError> {
+        self.state.checkout(state_hash)
     }
 
     fn trie(&self, request: TrieRequest) -> TrieResult {

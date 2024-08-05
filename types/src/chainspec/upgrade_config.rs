@@ -1,4 +1,5 @@
 use num_rational::Ratio;
+use serde::Serialize;
 use std::collections::BTreeMap;
 
 use crate::{
@@ -7,7 +8,7 @@ use crate::{
 };
 
 /// Represents the configuration of a protocol upgrade.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProtocolUpgradeConfig {
     pre_state_hash: Digest,
     current_protocol_version: ProtocolVersion,
@@ -23,6 +24,10 @@ pub struct ProtocolUpgradeConfig {
     global_state_update: BTreeMap<Key, StoredValue>,
     chainspec_registry: ChainspecRegistry,
     fee_handling: FeeHandling,
+    migrate_legacy_accounts: bool,
+    migrate_legacy_contracts: bool,
+    maximum_delegation_amount: u64,
+    minimum_delegation_amount: u64,
 }
 
 impl ProtocolUpgradeConfig {
@@ -43,6 +48,10 @@ impl ProtocolUpgradeConfig {
         global_state_update: BTreeMap<Key, StoredValue>,
         chainspec_registry: ChainspecRegistry,
         fee_handling: FeeHandling,
+        migrate_legacy_accounts: bool,
+        migrate_legacy_contracts: bool,
+        maximum_delegation_amount: u64,
+        minimum_delegation_amount: u64,
     ) -> Self {
         ProtocolUpgradeConfig {
             pre_state_hash,
@@ -59,6 +68,10 @@ impl ProtocolUpgradeConfig {
             global_state_update,
             chainspec_registry,
             fee_handling,
+            migrate_legacy_accounts,
+            migrate_legacy_contracts,
+            maximum_delegation_amount,
+            minimum_delegation_amount,
         }
     }
 
@@ -135,5 +148,25 @@ impl ProtocolUpgradeConfig {
     /// Fee handling setting.
     pub fn fee_handling(&self) -> FeeHandling {
         self.fee_handling
+    }
+
+    /// Migrate legacy accounts.
+    pub fn migrate_legacy_accounts(&self) -> bool {
+        self.migrate_legacy_accounts
+    }
+
+    /// Migrate legacy contracts.
+    pub fn migrate_legacy_contracts(&self) -> bool {
+        self.migrate_legacy_contracts
+    }
+
+    /// Maximum delegation amount for validator.
+    pub fn maximum_delegation_amount(&self) -> u64 {
+        self.maximum_delegation_amount
+    }
+
+    /// Minimum delegation amount for validator.
+    pub fn minimum_delegation_amount(&self) -> u64 {
+        self.minimum_delegation_amount
     }
 }

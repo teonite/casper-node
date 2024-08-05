@@ -1,4 +1,4 @@
-#![allow(clippy::integer_arithmetic)] // In tests, overflows panic anyway.
+#![allow(clippy::arithmetic_side_effects)] // In tests, overflows panic anyway.
 
 use std::{
     collections::{hash_map::DefaultHasher, HashMap, VecDeque},
@@ -135,7 +135,9 @@ impl From<ProtocolOutcome<TestContext>> for ZugMessage {
                 ZugMessage::Timer(timestamp, timer_id)
             }
             ProtocolOutcome::QueueAction(action_id) => ZugMessage::QueueAction(action_id),
-            ProtocolOutcome::CreateNewBlock(block_ctx) => ZugMessage::RequestNewBlock(block_ctx),
+            ProtocolOutcome::CreateNewBlock(block_ctx, _expiry) => {
+                ZugMessage::RequestNewBlock(block_ctx)
+            }
             ProtocolOutcome::FinalizedBlock(finalized_block) => {
                 ZugMessage::FinalizedBlock(finalized_block)
             }
@@ -166,7 +168,7 @@ pub(crate) enum TestRunError {
 }
 
 impl Display for TestRunError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             TestRunError::NoMessages => write!(
                 f,
@@ -1021,7 +1023,7 @@ impl Debug for HashWrapper {
 }
 
 impl Display for HashWrapper {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         Debug::fmt(self, f)
     }
 }
@@ -1135,8 +1137,8 @@ mod test_harness {
                 (
                     v.finalized_values().cloned().collect::<Vec<_>>(),
                     v.messages_produced()
+                        .filter(|&zm| zm.is_signed_gossip_message() || zm.is_proposal())
                         .cloned()
-                        .filter(|zm| zm.is_signed_gossip_message() || zm.is_proposal())
                         .count(),
                 )
             })

@@ -12,7 +12,7 @@ use serde::Serialize;
 #[cfg(any(feature = "std", test))]
 use thiserror::Error;
 
-#[cfg(any(feature = "std", test))]
+#[cfg(any(feature = "std-fs-io", test))]
 use crate::file_utils::{ReadFileError, WriteFileError};
 
 /// Cryptographic errors.
@@ -104,18 +104,22 @@ pub enum ErrorExt {
     CryptoError(#[from] Error),
 
     /// Error trying to read a secret key.
+    #[cfg(any(feature = "std-fs-io", test))]
     #[error("secret key load failed: {0}")]
     SecretKeyLoad(ReadFileError),
 
     /// Error trying to read a public key.
+    #[cfg(any(feature = "std-fs-io", test))]
     #[error("public key load failed: {0}")]
     PublicKeyLoad(ReadFileError),
 
     /// Error trying to write a secret key.
+    #[cfg(any(feature = "std-fs-io", test))]
     #[error("secret key save failed: {0}")]
     SecretKeySave(WriteFileError),
 
     /// Error trying to write a public key.
+    #[cfg(any(feature = "std-fs-io", test))]
     #[error("public key save failed: {0}")]
     PublicKeySave(WriteFileError),
 
@@ -157,8 +161,10 @@ mod serde_helpers {
     #[derive(Serialize)]
     #[serde(remote = "base64::DecodeError")]
     pub(super) enum Base64DecodeError {
+        #[allow(dead_code)]
         InvalidByte(usize, u8),
         InvalidLength,
+        #[allow(dead_code)]
         InvalidLastSymbol(usize, u8),
     }
 }

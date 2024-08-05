@@ -29,25 +29,26 @@ use tracing::{debug, error, info, trace};
 use casper_execution_engine::engine_state::{EngineConfigBuilder, ExecutionEngineV1};
 use casper_storage::{
     data_access_layer::{
-        AddressableEntityRequest, BlockStore, DataAccessLayer, ExecutionResultsChecksumRequest,
-        FlushRequest, FlushResult, GenesisRequest, GenesisResult, ProtocolUpgradeRequest,
-        ProtocolUpgradeResult, TrieRequest,
+        AddressableEntityRequest, AddressableEntityResult, BlockStore, DataAccessLayer,
+        EntryPointsRequest, ExecutionResultsChecksumRequest, FlushRequest, FlushResult,
+        GenesisRequest, GenesisResult, TrieRequest,
     },
     global_state::{
         state::{lmdb::LmdbGlobalState, CommitProvider, StateProvider},
         transaction_source::lmdb::LmdbEnvironment,
         trie_store::lmdb::LmdbTrieStore,
     },
-    system::{genesis::GenesisError, protocol_upgrade::ProtocolUpgradeError},
+    system::genesis::GenesisError,
     tracking_copy::TrackingCopyError,
 };
 use casper_types::{
-    ActivationPoint, Chainspec, ChainspecRawBytes, ChainspecRegistry, EraId, ProtocolUpgradeConfig,
+    account::AccountHash, ActivationPoint, Chainspec, ChainspecRawBytes, ChainspecRegistry,
+    EntityAddr, EraId, Key, PublicKey,
 };
 
 use crate::{
     components::{fetcher::FetchResponse, Component, ComponentState},
-    contract_runtime::types::EraPrice,
+    contract_runtime::{types::EraPrice, utils::handle_protocol_upgrade},
     effect::{
         announcements::{
             ContractRuntimeAnnouncement, FatalAnnouncement, MetaBlockAnnouncement,
@@ -59,7 +60,10 @@ use crate::{
     },
     fatal,
     protocol::Message,
-    types::{TrieOrChunk, TrieOrChunkId},
+    types::{
+        BlockPayload, ExecutableBlock, FinalizedBlock, InternalEraReport, MetaBlockState,
+        TrieOrChunk, TrieOrChunkId,
+    },
     NodeRng,
 };
 pub(crate) use config::Config;
@@ -129,6 +133,7 @@ impl ContractRuntime {
             .with_max_associated_keys(chainspec.core_config.max_associated_keys)
             .with_max_runtime_call_stack_height(chainspec.core_config.max_runtime_call_stack_height)
             .with_minimum_delegation_amount(chainspec.core_config.minimum_delegation_amount)
+            .with_maximum_delegation_amount(chainspec.core_config.maximum_delegation_amount)
             .with_strict_argument_checking(chainspec.core_config.strict_argument_checking)
             .with_vesting_schedule_period_millis(
                 chainspec.core_config.vesting_schedule_period.millis(),
@@ -262,32 +267,6 @@ impl ContractRuntime {
         result
     }
 
-    /// Commits protocol upgrade.
-    pub(crate) fn commit_upgrade(
-        &self,
-        upgrade_config: ProtocolUpgradeConfig,
-    ) -> ProtocolUpgradeResult {
-        debug!(?upgrade_config, "upgrade");
-        let start = Instant::now();
-
-        let upgrade_request = ProtocolUpgradeRequest::new(upgrade_config);
-        let data_access_layer = Arc::clone(&self.data_access_layer);
-        let result = data_access_layer.protocol_upgrade(upgrade_request);
-        self.metrics
-            .commit_upgrade
-            .observe(start.elapsed().as_secs_f64());
-        debug!(?result, "upgrade result");
-        if result.is_success() {
-            let flush_req = FlushRequest::new();
-            if let FlushResult::Failure(err) = data_access_layer.flush(flush_req) {
-                return ProtocolUpgradeResult::Failure(ProtocolUpgradeError::TrackingCopy(
-                    err.into(),
-                ));
-            }
-        }
-        result
-    }
-
     /// Handles a contract runtime request.
     fn handle_contract_runtime_request<REv>(
         &mut self,
@@ -317,6 +296,23 @@ impl ContractRuntime {
                     let result = data_access_layer.query(query_request);
                     metrics.run_query.observe(start.elapsed().as_secs_f64());
                     trace!(?result, "query result");
+                    responder.respond(result).await
+                }
+                .ignore()
+            }
+            ContractRuntimeRequest::QueryByPrefix {
+                request: query_request,
+                responder,
+            } => {
+                trace!(?query_request, "query by prefix");
+                let metrics = Arc::clone(&self.metrics);
+                let data_access_layer = Arc::clone(&self.data_access_layer);
+                async move {
+                    let start = Instant::now();
+
+                    let result = data_access_layer.prefixed_values(query_request);
+                    metrics.run_query.observe(start.elapsed().as_secs_f64());
+                    trace!(?result, "query by prefix result");
                     responder.respond(result).await
                 }
                 .ignore()
@@ -355,6 +351,21 @@ impl ContractRuntime {
                 }
                 .ignore()
             }
+            ContractRuntimeRequest::GetSeigniorageRecipients { request, responder } => {
+                trace!(?request, "get seigniorage recipients request");
+                let metrics = Arc::clone(&self.metrics);
+                let data_access_layer = Arc::clone(&self.data_access_layer);
+                async move {
+                    let start = Instant::now();
+                    let result = data_access_layer.seigniorage_recipients(request);
+                    metrics
+                        .get_seigniorage_recipients
+                        .observe(start.elapsed().as_secs_f64());
+                    trace!(?result, "seigniorage recipients result");
+                    responder.respond(result).await
+                }
+                .ignore()
+            }
             ContractRuntimeRequest::GetExecutionResultsChecksum {
                 state_root_hash,
                 responder,
@@ -376,7 +387,7 @@ impl ContractRuntime {
             }
             ContractRuntimeRequest::GetAddressableEntity {
                 state_root_hash,
-                key,
+                entity_addr,
                 responder,
             } => {
                 trace!(?state_root_hash, "get addressable entity");
@@ -384,8 +395,29 @@ impl ContractRuntime {
                 let data_access_layer = Arc::clone(&self.data_access_layer);
                 async move {
                     let start = Instant::now();
-                    let request = AddressableEntityRequest::new(state_root_hash, key);
+                    let entity_key = match entity_addr {
+                        EntityAddr::SmartContract(_) | EntityAddr::System(_) => Key::AddressableEntity(entity_addr),
+                        EntityAddr::Account(account) => Key::Account(AccountHash::new(account)),
+                    };
+                    let request = AddressableEntityRequest::new(state_root_hash, entity_key);
                     let result = data_access_layer.addressable_entity(request);
+                    let result = match &result {
+                        AddressableEntityResult::ValueNotFound(msg) => {
+                            if entity_addr.is_contract() {
+                                trace!(%msg, "can not read addressable entity by Key::AddressableEntity or Key::Account, will try by Key::Hash");
+                                let entity_key = Key::Hash(entity_addr.value());
+                                let request = AddressableEntityRequest::new(state_root_hash, entity_key);
+                                data_access_layer.addressable_entity(request)
+                            }
+                            else {
+                                result
+                            }
+                        },
+                        AddressableEntityResult::RootNotFound |
+                        AddressableEntityResult::Success { .. } |
+                        AddressableEntityResult::Failure(_) => result,
+                    };
+
                     metrics
                         .addressable_entity
                         .observe(start.elapsed().as_secs_f64());
@@ -394,42 +426,20 @@ impl ContractRuntime {
                 }
                 .ignore()
             }
-            ContractRuntimeRequest::GetTotalSupply {
-                request: total_supply_request,
+            ContractRuntimeRequest::GetEntryPoint {
+                state_root_hash,
+                key,
                 responder,
             } => {
-                trace!(?total_supply_request, "total supply request");
+                trace!(?state_root_hash, "get entry point");
                 let metrics = Arc::clone(&self.metrics);
                 let data_access_layer = Arc::clone(&self.data_access_layer);
                 async move {
                     let start = Instant::now();
-                    let result = data_access_layer.total_supply(total_supply_request);
-                    metrics
-                        .get_total_supply
-                        .observe(start.elapsed().as_secs_f64());
-                    trace!(?result, "total supply results");
-                    responder.respond(result).await
-                }
-                .ignore()
-            }
-            ContractRuntimeRequest::GetRoundSeigniorageRate {
-                request: round_seigniorage_rate_request,
-                responder,
-            } => {
-                trace!(
-                    ?round_seigniorage_rate_request,
-                    "round seigniorage rate request"
-                );
-                let metrics = Arc::clone(&self.metrics);
-                let data_access_layer = Arc::clone(&self.data_access_layer);
-                async move {
-                    let start = Instant::now();
-                    let result =
-                        data_access_layer.round_seigniorage_rate(round_seigniorage_rate_request);
-                    metrics
-                        .get_round_seigniorage_rate
-                        .observe(start.elapsed().as_secs_f64());
-                    trace!(?result, "round seigniorage rate results");
+                    let request = EntryPointsRequest::new(state_root_hash, key);
+                    let result = data_access_layer.entry_point(request);
+                    metrics.entry_points.observe(start.elapsed().as_secs_f64());
+                    trace!(?result, "get addressable entity");
                     responder.respond(result).await
                 }
                 .ignore()
@@ -489,6 +499,82 @@ impl ContractRuntime {
                     responder.respond(result).await
                 }
                 .ignore()
+            }
+            ContractRuntimeRequest::UpdatePreState { new_pre_state } => {
+                let next_block_height = new_pre_state.next_block_height();
+                self.set_initial_state(new_pre_state);
+                async move {
+                    let block_header = match effect_builder
+                        .get_highest_complete_block_header_from_storage()
+                        .await
+                    {
+                        Some(header)
+                            if header.is_switch_block()
+                                && (header.height() + 1 == next_block_height) =>
+                        {
+                            header
+                        }
+                        Some(_) => {
+                            return fatal!(
+                                effect_builder,
+                                "Latest complete block is not a switch block to update state"
+                            )
+                            .await;
+                        }
+                        None => {
+                            return fatal!(
+                                effect_builder,
+                                "No complete block header found to update post upgrade state"
+                            )
+                            .await;
+                        }
+                    };
+
+                    let finalized_block = FinalizedBlock::new(
+                        BlockPayload::default(),
+                        Some(InternalEraReport::default()),
+                        block_header.timestamp(),
+                        block_header.next_block_era_id(),
+                        next_block_height,
+                        PublicKey::System,
+                    );
+
+                    info!("Enqueuing block for execution post state refresh");
+
+                    effect_builder
+                        .enqueue_block_for_execution(
+                            ExecutableBlock::from_finalized_block_and_transactions(
+                                finalized_block,
+                                vec![],
+                            ),
+                            MetaBlockState::new_not_to_be_gossiped(),
+                        )
+                        .await;
+                }
+                .ignore()
+            }
+            ContractRuntimeRequest::DoProtocolUpgrade {
+                protocol_upgrade_config,
+                next_block_height,
+                parent_hash,
+                parent_seed,
+            } => {
+                let mut effects = Effects::new();
+                let data_access_layer = Arc::clone(&self.data_access_layer);
+                let metrics = Arc::clone(&self.metrics);
+                effects.extend(
+                    handle_protocol_upgrade(
+                        effect_builder,
+                        data_access_layer,
+                        metrics,
+                        protocol_upgrade_config,
+                        next_block_height,
+                        parent_hash,
+                        parent_seed,
+                    )
+                    .ignore(),
+                );
+                effects
             }
             ContractRuntimeRequest::EnqueueBlockForExecution {
                 executable_block,

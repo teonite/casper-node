@@ -1,6 +1,6 @@
 use crate::{
     global_state::{error::Error as GlobalStateReader, state::StateReader},
-    tracking_copy::{TrackingCopyEntityExt, TrackingCopyError},
+    tracking_copy::{TrackingCopyEntityExt, TrackingCopyError, TrackingCopyExt},
     AddressGenerator, TrackingCopy,
 };
 use casper_types::{
@@ -8,7 +8,9 @@ use casper_types::{
     ContextAccessRights, FeeHandling, Key, Phase, ProtocolVersion, PublicKey, RefundHandling,
     StoredValue, TransactionHash, Transfer, URef, U512,
 };
+use num_rational::Ratio;
 use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
+use tracing::error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Config {
@@ -21,6 +23,8 @@ pub struct Config {
     max_delegators_per_validator: u32,
     minimum_delegation_amount: u64,
     balance_hold_interval: u64,
+    include_credits: bool,
+    credit_cap: Ratio<U512>,
 }
 
 impl Config {
@@ -35,6 +39,8 @@ impl Config {
         max_delegators_per_validator: u32,
         minimum_delegation_amount: u64,
         balance_hold_interval: u64,
+        include_credits: bool,
+        credit_cap: Ratio<U512>,
     ) -> Self {
         Config {
             transfer_config,
@@ -46,6 +52,8 @@ impl Config {
             max_delegators_per_validator,
             minimum_delegation_amount,
             balance_hold_interval,
+            include_credits,
+            credit_cap,
         }
     }
 
@@ -59,6 +67,11 @@ impl Config {
         let max_delegators_per_validator = chainspec.core_config.max_delegators_per_validator;
         let minimum_delegation_amount = chainspec.core_config.minimum_delegation_amount;
         let balance_hold_interval = chainspec.core_config.gas_hold_interval.millis();
+        let include_credits = chainspec.core_config.fee_handling == FeeHandling::NoFee;
+        let credit_cap = Ratio::new_raw(
+            U512::from(*chainspec.core_config.validator_credit_cap.numer()),
+            U512::from(*chainspec.core_config.validator_credit_cap.denom()),
+        );
         Config::new(
             transfer_config,
             fee_handling,
@@ -69,6 +82,8 @@ impl Config {
             max_delegators_per_validator,
             minimum_delegation_amount,
             balance_hold_interval,
+            include_credits,
+            credit_cap,
         )
     }
 
@@ -108,6 +123,14 @@ impl Config {
         self.balance_hold_interval
     }
 
+    pub fn include_credits(&self) -> bool {
+        self.include_credits
+    }
+
+    pub fn credit_cap(&self) -> Ratio<U512> {
+        self.credit_cap
+    }
+
     pub fn set_transfer_config(self, transfer_config: TransferConfig) -> Self {
         Config {
             transfer_config,
@@ -119,16 +142,19 @@ impl Config {
             minimum_delegation_amount: self.minimum_delegation_amount,
             compute_rewards: self.compute_rewards,
             balance_hold_interval: self.balance_hold_interval,
+            include_credits: self.include_credits,
+            credit_cap: self.credit_cap,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum TransferConfig {
     Administered {
         administrative_accounts: BTreeSet<AccountHash>,
         allow_unrestricted_transfers: bool,
     },
+    #[default]
     Unadministered,
 }
 
@@ -206,12 +232,6 @@ impl TransferConfig {
     }
 }
 
-impl Default for TransferConfig {
-    fn default() -> Self {
-        TransferConfig::Unadministered
-    }
-}
-
 pub enum Id {
     Transaction(TransactionHash),
     Seed(Vec<u8>),
@@ -235,6 +255,7 @@ pub struct RuntimeNative<S> {
 
     tracking_copy: Rc<RefCell<TrackingCopy<S>>>,
     address: AccountHash,
+    entity_key: Key,
     addressable_entity: AddressableEntity,
     named_keys: NamedKeys,
     access_rights: ContextAccessRights,
@@ -254,6 +275,7 @@ where
         id: Id,
         tracking_copy: Rc<RefCell<TrackingCopy<S>>>,
         address: AccountHash,
+        entity_key: Key,
         addressable_entity: AddressableEntity,
         named_keys: NamedKeys,
         access_rights: ContextAccessRights,
@@ -271,6 +293,7 @@ where
 
             tracking_copy,
             address,
+            entity_key,
             addressable_entity,
             named_keys,
             access_rights,
@@ -281,7 +304,6 @@ where
     }
 
     /// Creates a runtime with elevated permissions for systemic behaviors.
-    #[allow(clippy::too_many_arguments)]
     pub fn new_system_runtime(
         config: Config,
         protocol_version: ProtocolVersion,
@@ -292,8 +314,60 @@ where
         let seed = id.seed();
         let address_generator = AddressGenerator::new(&seed, phase);
         let transfers = vec![];
-        let (addressable_entity, named_keys, access_rights) =
+        let (entity_addr, addressable_entity, named_keys, access_rights) =
             tracking_copy.borrow_mut().system_entity(protocol_version)?;
+        let address = PublicKey::System.to_account_hash();
+        let entity_key = Key::AddressableEntity(entity_addr);
+        let remaining_spending_limit = U512::MAX; // system has no spending limit
+        Ok(RuntimeNative {
+            config,
+            id,
+            address_generator,
+            protocol_version,
+
+            tracking_copy,
+            address,
+            entity_key,
+            addressable_entity,
+            named_keys,
+            access_rights,
+            remaining_spending_limit,
+            transfers,
+            phase,
+        })
+    }
+
+    /// Creates a runtime context for a system contract.
+    pub fn new_system_contract_runtime(
+        config: Config,
+        protocol_version: ProtocolVersion,
+        id: Id,
+        tracking_copy: Rc<RefCell<TrackingCopy<S>>>,
+        phase: Phase,
+        name: &str,
+    ) -> Result<Self, TrackingCopyError> {
+        let seed = id.seed();
+        let address_generator = AddressGenerator::new(&seed, phase);
+        let transfers = vec![];
+
+        let system_entity_registry = tracking_copy.borrow().get_system_entity_registry()?;
+        let hash = match system_entity_registry.get(name).copied() {
+            Some(hash) => hash,
+            None => {
+                error!("unexpected failure; system contract {} not found", name);
+                return Err(TrackingCopyError::MissingSystemContractHash(
+                    name.to_string(),
+                ));
+            }
+        };
+        let addressable_entity = tracking_copy
+            .borrow_mut()
+            .get_addressable_entity_by_hash(hash)?;
+        let entity_addr = addressable_entity.entity_addr(hash);
+        let entity_key = Key::AddressableEntity(entity_addr);
+        let named_keys = tracking_copy.borrow().get_named_keys(entity_addr)?;
+        let access_rights = addressable_entity.extract_access_rights(hash, &named_keys);
+
         let address = PublicKey::System.to_account_hash();
         let remaining_spending_limit = U512::MAX; // system has no spending limit
         Ok(RuntimeNative {
@@ -304,6 +378,7 @@ where
 
             tracking_copy,
             address,
+            entity_key,
             addressable_entity,
             named_keys,
             access_rights,
@@ -337,8 +412,20 @@ where
         self.address
     }
 
+    pub fn with_address(&mut self, account_hash: AccountHash) {
+        self.address = account_hash;
+    }
+
+    pub fn entity_key(&self) -> &Key {
+        &self.entity_key
+    }
+
     pub fn addressable_entity(&self) -> &AddressableEntity {
         &self.addressable_entity
+    }
+
+    pub fn with_addressable_entity(&mut self, entity: AddressableEntity) {
+        self.addressable_entity = entity;
     }
 
     pub fn named_keys(&self) -> &NamedKeys {
@@ -349,7 +436,7 @@ where
         &mut self.named_keys
     }
 
-    pub fn access_rights(&mut self) -> &ContextAccessRights {
+    pub fn access_rights(&self) -> &ContextAccessRights {
         &self.access_rights
     }
 

@@ -7,7 +7,9 @@ use thiserror::Error;
 
 use casper_execution_engine::engine_state::Error as EngineStateError;
 use casper_storage::{
-    data_access_layer::{BlockRewardsError, FeeError, StepError},
+    data_access_layer::{
+        forced_undelegate::ForcedUndelegateError, BlockRewardsError, FeeError, StepError,
+    },
     global_state::error::Error as GlobalStateError,
     tracking_copy::TrackingCopyError,
 };
@@ -89,6 +91,12 @@ pub enum BlockExecutionError {
         #[serde(skip_serializing)]
         BlockRewardsError,
     ),
+    #[error(transparent)]
+    ForcedUndelegate(
+        #[from]
+        #[serde(skip_serializing)]
+        ForcedUndelegateError,
+    ),
     /// Failed to compute the approvals checksum.
     #[error("failed to compute approvals checksum: {0}")]
     FailedToComputeApprovalsChecksum(bytesrepr::Error),
@@ -137,4 +145,13 @@ pub enum BlockExecutionError {
     // Payment error.
     #[error("Error while trying to set up payment for transaction: {0}")]
     PaymentError(String),
+    // Error attempting to set block global data.
+    #[error("Error while attempting to store block global data: {0}")]
+    BlockGlobal(String),
+    #[error("No switch block header available for era: {0}")]
+    /// No switch block available
+    NoSwitchBlockHash(u64),
+    #[error("Unsupported execution kind: {0}")]
+    /// Unsupported execution kind
+    UnsupportedTransactionKind(u8),
 }

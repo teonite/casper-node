@@ -9,8 +9,8 @@ use casper_types::{
     bytesrepr::FromBytes,
     execution::Effects,
     system::{auction, auction::DelegationRate},
-    CLTyped, CLValue, CLValueError, Chainspec, Digest, HoldsEpoch, InitiatorAddr, ProtocolVersion,
-    PublicKey, RuntimeArgs, TransactionEntryPoint, TransactionHash, U512,
+    CLTyped, CLValue, CLValueError, Chainspec, Digest, InitiatorAddr, ProtocolVersion, PublicKey,
+    RuntimeArgs, TransactionEntryPoint, TransactionHash, U512,
 };
 
 use crate::{
@@ -45,7 +45,8 @@ pub enum AuctionMethod {
         public_key: PublicKey,
         delegation_rate: DelegationRate,
         amount: U512,
-        holds_epoch: HoldsEpoch,
+        minimum_delegation_amount: u64,
+        maximum_delegation_amount: u64,
     },
     WithdrawBid {
         public_key: PublicKey,
@@ -56,8 +57,6 @@ pub enum AuctionMethod {
         validator: PublicKey,
         amount: U512,
         max_delegators_per_validator: u32,
-        minimum_delegation_amount: u64,
-        holds_epoch: HoldsEpoch,
     },
     Undelegate {
         delegator: PublicKey,
@@ -69,7 +68,10 @@ pub enum AuctionMethod {
         validator: PublicKey,
         amount: U512,
         new_validator: PublicKey,
-        minimum_delegation_amount: u64,
+    },
+    ChangeBidPublicKey {
+        public_key: PublicKey,
+        new_public_key: PublicKey,
     },
 }
 
@@ -77,27 +79,30 @@ impl AuctionMethod {
     pub fn from_parts(
         entry_point: TransactionEntryPoint,
         runtime_args: &RuntimeArgs,
-        holds_epoch: HoldsEpoch,
         chainspec: &Chainspec,
     ) -> Result<Self, AuctionMethodError> {
         match entry_point {
-            TransactionEntryPoint::Custom(_) | TransactionEntryPoint::Transfer => {
+            TransactionEntryPoint::Call
+            | TransactionEntryPoint::Custom(_)
+            | TransactionEntryPoint::Transfer => {
                 Err(AuctionMethodError::InvalidEntryPoint(entry_point))
             }
             TransactionEntryPoint::ActivateBid => Self::new_activate_bid(runtime_args),
-            TransactionEntryPoint::AddBid => Self::new_add_bid(runtime_args, holds_epoch),
+            TransactionEntryPoint::AddBid => Self::new_add_bid(
+                runtime_args,
+                chainspec.core_config.minimum_delegation_amount,
+                chainspec.core_config.maximum_delegation_amount,
+            ),
             TransactionEntryPoint::WithdrawBid => Self::new_withdraw_bid(runtime_args),
             TransactionEntryPoint::Delegate => Self::new_delegate(
                 runtime_args,
                 chainspec.core_config.max_delegators_per_validator,
-                chainspec.core_config.minimum_delegation_amount,
-                holds_epoch,
             ),
             TransactionEntryPoint::Undelegate => Self::new_undelegate(runtime_args),
-            TransactionEntryPoint::Redelegate => Self::new_redelegate(
-                runtime_args,
-                chainspec.core_config.minimum_delegation_amount,
-            ),
+            TransactionEntryPoint::Redelegate => Self::new_redelegate(runtime_args),
+            TransactionEntryPoint::ChangeBidPublicKey => {
+                Self::new_change_bid_public_key(runtime_args)
+            }
         }
     }
 
@@ -108,16 +113,25 @@ impl AuctionMethod {
 
     fn new_add_bid(
         runtime_args: &RuntimeArgs,
-        holds_epoch: HoldsEpoch,
+        global_minimum_delegation: u64,
+        global_maximum_delegation: u64,
     ) -> Result<Self, AuctionMethodError> {
         let public_key = Self::get_named_argument(runtime_args, auction::ARG_PUBLIC_KEY)?;
         let delegation_rate = Self::get_named_argument(runtime_args, auction::ARG_DELEGATION_RATE)?;
         let amount = Self::get_named_argument(runtime_args, auction::ARG_AMOUNT)?;
+        let minimum_delegation_amount =
+            Self::get_named_argument(runtime_args, auction::ARG_MINIMUM_DELEGATION_AMOUNT)
+                .unwrap_or(global_minimum_delegation);
+        let maximum_delegation_amount =
+            Self::get_named_argument(runtime_args, auction::ARG_MAXIMUM_DELEGATION_AMOUNT)
+                .unwrap_or(global_maximum_delegation);
+
         Ok(Self::AddBid {
             public_key,
             delegation_rate,
             amount,
-            holds_epoch,
+            minimum_delegation_amount,
+            maximum_delegation_amount,
         })
     }
 
@@ -130,8 +144,6 @@ impl AuctionMethod {
     fn new_delegate(
         runtime_args: &RuntimeArgs,
         max_delegators_per_validator: u32,
-        minimum_delegation_amount: u64,
-        holds_epoch: HoldsEpoch,
     ) -> Result<Self, AuctionMethodError> {
         let delegator = Self::get_named_argument(runtime_args, auction::ARG_DELEGATOR)?;
         let validator = Self::get_named_argument(runtime_args, auction::ARG_VALIDATOR)?;
@@ -142,8 +154,6 @@ impl AuctionMethod {
             validator,
             amount,
             max_delegators_per_validator,
-            minimum_delegation_amount,
-            holds_epoch,
         })
     }
 
@@ -159,10 +169,7 @@ impl AuctionMethod {
         })
     }
 
-    fn new_redelegate(
-        runtime_args: &RuntimeArgs,
-        minimum_delegation_amount: u64,
-    ) -> Result<Self, AuctionMethodError> {
+    fn new_redelegate(runtime_args: &RuntimeArgs) -> Result<Self, AuctionMethodError> {
         let delegator = Self::get_named_argument(runtime_args, auction::ARG_DELEGATOR)?;
         let validator = Self::get_named_argument(runtime_args, auction::ARG_VALIDATOR)?;
         let amount = Self::get_named_argument(runtime_args, auction::ARG_AMOUNT)?;
@@ -173,7 +180,16 @@ impl AuctionMethod {
             validator,
             amount,
             new_validator,
-            minimum_delegation_amount,
+        })
+    }
+
+    fn new_change_bid_public_key(runtime_args: &RuntimeArgs) -> Result<Self, AuctionMethodError> {
+        let public_key = Self::get_named_argument(runtime_args, auction::ARG_PUBLIC_KEY)?;
+        let new_public_key = Self::get_named_argument(runtime_args, auction::ARG_NEW_PUBLIC_KEY)?;
+
+        Ok(Self::ChangeBidPublicKey {
+            public_key,
+            new_public_key,
         })
     }
 

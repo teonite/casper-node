@@ -1,12 +1,13 @@
+use core::convert::TryInto;
 use std::iter;
 
 use alloc::collections::BTreeMap;
 use rand::Rng;
 
 use crate::{
-    system::auction::ValidatorWeights, testing::TestRng, Block, BlockHash, BlockV2, Digest,
-    EraEndV2, EraId, ProtocolVersion, PublicKey, RewardedSignatures, Timestamp, Transaction,
-    TransactionEntryPoint, TransactionSessionKind, TransactionTarget, U512,
+    system::auction::ValidatorWeights, testing::TestRng, transaction::TransactionCategory, Block,
+    BlockHash, BlockV2, Digest, EraEndV2, EraId, ProtocolVersion, PublicKey, RewardedSignatures,
+    Timestamp, Transaction, U512,
 };
 
 /// A helper to build the blocks with various properties required for tests.
@@ -169,50 +170,45 @@ impl TestBlockV2Builder {
         let timestamp = timestamp.unwrap_or_else(Timestamp::now);
         let era_id = era.unwrap_or(EraId::random(rng));
         let height = height.unwrap_or_else(|| era_id.value() * 10 + rng.gen_range(0..10));
-        let protocol_version = protocol_version;
         let proposer = proposer.unwrap_or_else(|| PublicKey::random(rng));
 
-        let mut transfer_hashes = vec![];
-        let mut staking_hashes = vec![];
+        let mut mint_hashes = vec![];
+        let mut auction_hashes = vec![];
         let mut install_upgrade_hashes = vec![];
-        let mut standard_hashes = vec![];
+        let mut large_hashes = vec![];
+        let mut medium_hashes = vec![];
+        let mut small_hashes = vec![];
         for txn in txns {
             let txn_hash = txn.hash();
-            match txn {
-                Transaction::Deploy(deploy) => {
-                    if deploy.session().is_transfer() {
-                        transfer_hashes.push(txn_hash);
-                    } else {
-                        standard_hashes.push(txn_hash);
-                    }
-                }
-                Transaction::V1(v1_txn) => match v1_txn.target() {
-                    TransactionTarget::Native => match v1_txn.entry_point() {
-                        TransactionEntryPoint::Custom(_) => {
-                            panic!("custom entry point not supported for native target")
-                        }
-                        TransactionEntryPoint::Transfer => transfer_hashes.push(txn_hash),
-                        TransactionEntryPoint::AddBid
-                        | TransactionEntryPoint::WithdrawBid
-                        | TransactionEntryPoint::Delegate
-                        | TransactionEntryPoint::Undelegate
-                        | TransactionEntryPoint::Redelegate
-                        | TransactionEntryPoint::ActivateBid => staking_hashes.push(txn_hash),
-                    },
-                    TransactionTarget::Stored { .. } => standard_hashes.push(txn_hash),
-                    TransactionTarget::Session { kind, .. } => match kind {
-                        TransactionSessionKind::Standard | TransactionSessionKind::Isolated => {
-                            standard_hashes.push(txn_hash)
-                        }
-                        TransactionSessionKind::Installer | TransactionSessionKind::Upgrader => {
-                            install_upgrade_hashes.push(txn_hash)
-                        }
-                    },
-                },
+            let category: TransactionCategory = txn
+                .transaction_category()
+                .try_into()
+                .expect("Expected a valid priority");
+            match category {
+                TransactionCategory::Mint => mint_hashes.push(txn_hash),
+                TransactionCategory::Auction => auction_hashes.push(txn_hash),
+                TransactionCategory::InstallUpgrade => install_upgrade_hashes.push(txn_hash),
+                TransactionCategory::Large => large_hashes.push(txn_hash),
+                TransactionCategory::Medium => medium_hashes.push(txn_hash),
+                TransactionCategory::Small => small_hashes.push(txn_hash),
             }
         }
+        let transactions = {
+            let mut ret = BTreeMap::new();
+            ret.insert(TransactionCategory::Mint as u8, mint_hashes);
+            ret.insert(TransactionCategory::Auction as u8, auction_hashes);
+            ret.insert(
+                TransactionCategory::InstallUpgrade as u8,
+                install_upgrade_hashes,
+            );
+            ret.insert(TransactionCategory::Large as u8, large_hashes);
+            ret.insert(TransactionCategory::Medium as u8, medium_hashes);
+            ret.insert(TransactionCategory::Small as u8, small_hashes);
+            ret
+        };
         let rewarded_signatures = rewarded_signatures.unwrap_or_default();
         let current_gas_price: u8 = 1;
+        let last_switch_block_hash = BlockHash::new(Digest::from([8; Digest::LENGTH]));
         BlockV2::new(
             parent_hash,
             parent_seed,
@@ -224,12 +220,10 @@ impl TestBlockV2Builder {
             height,
             protocol_version,
             proposer,
-            transfer_hashes,
-            staking_hashes,
-            install_upgrade_hashes,
-            standard_hashes,
+            transactions,
             rewarded_signatures,
             current_gas_price,
+            Some(last_switch_block_hash),
         )
     }
 
@@ -262,8 +256,11 @@ fn gen_era_end_v2(
         .collect();
     let rewards = iter::repeat_with(|| {
         let pub_key = PublicKey::random(rng);
-        let reward = rng.gen_range(1..=1_000_000_000 + 1);
-        (pub_key, U512::from(reward))
+        let mut rewards = vec![U512::from(rng.gen_range(1..=1_000_000_000 + 1))];
+        if rng.gen_bool(0.2) {
+            rewards.push(U512::from(rng.gen_range(1..=1_000_000_000 + 1)));
+        };
+        (pub_key, rewards)
     })
     .take(rewards_count)
     .collect();

@@ -145,7 +145,7 @@ fn create_sync_leap_test_chain(
         assert!(put_block(
             &mut harness,
             &mut storage,
-            Arc::new(block.clone())
+            Arc::new(block.clone()),
         ));
         let block_hash = *block.hash();
         let block_height = block.height();
@@ -180,7 +180,7 @@ fn create_sync_leap_test_chain(
             assert!(put_block_signatures(
                 &mut harness,
                 &mut storage,
-                block_signatures.into()
+                block_signatures.into(),
             ));
             storage.completed_blocks.insert(block.height());
         }
@@ -651,6 +651,7 @@ fn get_block_transfers(
     assert!(harness.is_idle());
     response
 }
+
 fn get_block_and_metadata_by_height(
     harness: &mut ComponentHarness<UnitTestEvent>,
     storage: &mut Storage,
@@ -1118,7 +1119,7 @@ fn should_retrieve_transactions_era_ids() {
     assert!(get_transactions_era_ids(
         &mut harness,
         &mut storage,
-        random_transaction_hashes.clone()
+        random_transaction_hashes.clone(),
     )
     .is_empty());
 
@@ -1400,6 +1401,7 @@ fn prepare_exec_result_with_transfer(
         payment: vec![],
         transfers: vec![transfer.clone()],
         effects: Effects::new(),
+        size_estimate: rng.gen(),
     });
     (exec_result, transfer)
 }
@@ -1682,7 +1684,7 @@ fn should_hard_reset() {
         assert!(put_complete_block(
             &mut harness,
             &mut storage,
-            block.clone()
+            block.clone(),
         ));
     }
 
@@ -1698,7 +1700,7 @@ fn should_hard_reset() {
         assert!(put_block_signatures(
             &mut harness,
             &mut storage,
-            block_signatures
+            block_signatures,
         ));
     }
 
@@ -1952,10 +1954,10 @@ fn should_get_trusted_ancestor_headers() {
     let (storage, _, blocks) = create_sync_leap_test_chain(&[], false, None);
 
     let get_results = |requested_height: usize| -> Vec<u64> {
-        let mut txn = storage.block_store.checkout_ro().unwrap();
+        let txn = storage.block_store.checkout_ro().unwrap();
         let requested_block_header = blocks.get(requested_height).unwrap().clone_header();
         storage
-            .get_trusted_ancestor_headers(&mut txn, &requested_block_header)
+            .get_trusted_ancestor_headers(&txn, &requested_block_header)
             .unwrap()
             .unwrap()
             .iter()
@@ -1973,15 +1975,15 @@ fn should_get_signed_block_headers() {
     let (storage, _, blocks) = create_sync_leap_test_chain(&[], false, None);
 
     let get_results = |requested_height: usize| -> Vec<u64> {
-        let mut txn = storage.block_store.checkout_ro().unwrap();
+        let txn = storage.block_store.checkout_ro().unwrap();
         let requested_block_header = blocks.get(requested_height).unwrap().clone_header();
         let highest_block_header_with_sufficient_signatures = storage
-            .get_highest_complete_signed_block_header(&mut txn)
+            .get_highest_complete_signed_block_header(&txn)
             .unwrap()
             .unwrap();
         storage
             .get_signed_block_headers(
-                &mut txn,
+                &txn,
                 &requested_block_header,
                 &highest_block_header_with_sufficient_signatures,
             )
@@ -2016,16 +2018,16 @@ fn should_get_signed_block_headers_when_no_sufficient_finality_in_most_recent_bl
     let (storage, _, blocks) = create_sync_leap_test_chain(&[12], false, None);
 
     let get_results = |requested_height: usize| -> Vec<u64> {
-        let mut txn = storage.block_store.checkout_ro().unwrap();
+        let txn = storage.block_store.checkout_ro().unwrap();
         let requested_block_header = blocks.get(requested_height).unwrap().clone_header();
         let highest_block_header_with_sufficient_signatures = storage
-            .get_highest_complete_signed_block_header(&mut txn)
+            .get_highest_complete_signed_block_header(&txn)
             .unwrap()
             .unwrap();
 
         storage
             .get_signed_block_headers(
-                &mut txn,
+                &txn,
                 &requested_block_header,
                 &highest_block_header_with_sufficient_signatures,
             )
@@ -2299,7 +2301,7 @@ fn check_force_resync_with_marker_file() {
     );
     drop(storage);
     // Remove the marker file.
-    std::fs::remove_file(&force_resync_file_path).unwrap();
+    fs::remove_file(&force_resync_file_path).unwrap();
     assert!(!force_resync_file_path.exists());
 
     // Reinitialize storage with force resync enabled.
@@ -2503,17 +2505,17 @@ fn can_retrieve_block_by_height_with_different_block_versions() {
     assert!(!is_block_stored(
         &mut harness,
         &mut storage,
-        *block_14.hash()
+        *block_14.hash(),
     ));
     assert!(!is_block_stored(
         &mut harness,
         &mut storage,
-        *block_v2_33.hash()
+        *block_v2_33.hash(),
     ));
     assert!(!is_block_stored(
         &mut harness,
         &mut storage,
-        *block_v2_99.hash()
+        *block_v2_99.hash(),
     ));
 
     let was_new = put_block(&mut harness, &mut storage, Arc::new(block_33.clone()));
@@ -2521,7 +2523,7 @@ fn can_retrieve_block_by_height_with_different_block_versions() {
     assert!(mark_block_complete(
         &mut harness,
         &mut storage,
-        block_v2_33.height()
+        block_v2_33.height(),
     ));
 
     // block is of the current version so it should be returned
@@ -2533,7 +2535,7 @@ fn can_retrieve_block_by_height_with_different_block_versions() {
     assert!(is_block_stored(
         &mut harness,
         &mut storage,
-        *block_v2_33.hash()
+        *block_v2_33.hash(),
     ));
 
     assert_eq!(
@@ -2579,7 +2581,7 @@ fn can_retrieve_block_by_height_with_different_block_versions() {
     assert!(is_block_stored(
         &mut harness,
         &mut storage,
-        *block_14.hash()
+        *block_14.hash(),
     ));
 
     assert_eq!(
@@ -2732,7 +2734,7 @@ fn assert_block_exists_in_storage(
             harness,
             storage,
             *block_hash,
-            only_from_available_block_range
+            only_from_available_block_range,
         )
         .map_or(false, |_| true),
         expect_exists
@@ -2754,7 +2756,7 @@ fn assert_block_exists_in_storage(
             harness,
             storage,
             block_height,
-            only_from_available_block_range
+            only_from_available_block_range,
         )
         .map_or(false, |_| true),
         expect_exists
@@ -3020,7 +3022,7 @@ fn check_block_operations_with_node_1_5_2_storage() {
         assert!(put_block_signatures(
             &mut harness,
             &mut storage,
-            block_signatures
+            block_signatures,
         ));
 
         // Check that the block was stored and can be fetched as a versioned Block.
@@ -3071,7 +3073,7 @@ fn check_block_operations_with_node_1_5_2_storage() {
         assert!(put_block_signatures(
             &mut harness,
             &mut storage,
-            block_signatures
+            block_signatures,
         ));
 
         // Check that the block was stored and can be fetched as a versioned Block or
@@ -3127,7 +3129,7 @@ fn check_block_operations_with_node_1_5_2_storage() {
         assert!(put_block_signatures(
             &mut harness,
             &mut storage,
-            block_signatures
+            block_signatures,
         ));
 
         // Check that the block was stored and can be fetched as a versioned Block or

@@ -1,5 +1,3 @@
-mod consensus_environment;
-
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
@@ -38,7 +36,7 @@ use crate::consensus::{
     tests::utils::{ALICE_SIGNER, BOB_SIGNER, CAROL_SIGNER, DAVE_SIGNER, ELLEN_SIGNER},
     ValidatorSecret,
 };
-use consensus_environment::ConsensusEnvironment;
+
 
 /// Returns a new `State` with `ClContext` parameters suitable for tests.
 pub(crate) fn new_test_state<I, T>(weights: I, seed: u64) -> State<ClContext>
@@ -46,11 +44,9 @@ where
     I: IntoIterator<Item = T>,
     T: Into<Weight>,
 {
-    #[allow(clippy::integer_arithmetic)] // Left shift with small enough constants.
+    #[allow(clippy::arithmetic_side_effects)] // Left shift with small enough constants.
     let params = state::Params::new(
         seed,
-        highway_testing::TEST_BLOCK_REWARD,
-        highway_testing::TEST_BLOCK_REWARD / 5,
         TimeDiff::from_millis(1 << 14),
         TimeDiff::from_millis(1 << 19),
         TimeDiff::from_millis(1 << 14),
@@ -60,7 +56,7 @@ where
         highway_testing::TEST_ENDORSEMENT_EVIDENCE_LIMIT,
     );
     let weights = weights.into_iter().map(|w| w.into()).collect::<Vec<_>>();
-    state::State::new(weights, params, vec![], vec![])
+    State::new(weights, params, vec![], vec![])
 }
 
 const INSTANCE_ID_DATA: &[u8; 1] = &[123u8; 1];
@@ -74,27 +70,11 @@ where
     I2: IntoIterator<Item = PublicKey>,
     T: Into<U512>,
 {
-    new_test_highway_protocol_with_era_height(weights, init_faulty, None)
-}
-
-pub(crate) fn new_test_highway_protocol_with_era_height<I1, I2, T>(
-    weights: I1,
-    init_faulty: I2,
-    era_height: Option<u64>,
-) -> Box<dyn ConsensusProtocol<ClContext>>
-where
-    I1: IntoIterator<Item = (PublicKey, T)>,
-    I2: IntoIterator<Item = PublicKey>,
-    T: Into<U512>,
-{
     let weights = weights
         .into_iter()
         .map(|(pk, w)| (pk, w.into()))
         .collect::<Vec<_>>();
-    let mut chainspec = new_test_chainspec(weights.clone());
-    if let Some(era_height) = era_height {
-        chainspec.core_config.minimum_era_height = era_height;
-    }
+    let chainspec = new_test_chainspec(weights.clone());
     let config = Config {
         max_execution_delay: 3,
         highway: HighwayConfig {
@@ -274,69 +254,4 @@ fn max_rounds_per_era_returns_the_correct_value_for_prod_chainspec_value() {
     );
 
     assert_eq!(219, max_rounds_per_era);
-}
-
-#[test]
-fn no_slow_down_when_all_nodes_fast() {
-    let mut validators = BTreeMap::new();
-    validators.insert(ALICE_PUBLIC_KEY.clone(), (ALICE_SIGNER.clone(), 100));
-    validators.insert(BOB_PUBLIC_KEY.clone(), (BOB_SIGNER.clone(), 100));
-    validators.insert(CAROL_PUBLIC_KEY.clone(), (CAROL_SIGNER.clone(), 100));
-    validators.insert(DAVE_PUBLIC_KEY.clone(), (DAVE_SIGNER.clone(), 100));
-    validators.insert(ELLEN_PUBLIC_KEY.clone(), (ELLEN_SIGNER.clone(), 100));
-
-    let mut env = ConsensusEnvironment::new(validators, Default::default());
-    for _ in 0..10 {
-        env.crank_round();
-    }
-
-    assert_eq!(env.our_round_exp(), 0);
-}
-
-#[ignore = "TODO: unignore when exponent switching is improved"]
-#[test]
-fn slow_node_should_switch_own_round_exponent() {
-    let mut validators = BTreeMap::new();
-    validators.insert(ALICE_PUBLIC_KEY.clone(), (ALICE_SIGNER.clone(), 100));
-    validators.insert(BOB_PUBLIC_KEY.clone(), (BOB_SIGNER.clone(), 100));
-    validators.insert(CAROL_PUBLIC_KEY.clone(), (CAROL_SIGNER.clone(), 100));
-    validators.insert(DAVE_PUBLIC_KEY.clone(), (DAVE_SIGNER.clone(), 100));
-    validators.insert(ELLEN_PUBLIC_KEY.clone(), (ELLEN_SIGNER.clone(), 100));
-
-    // Alice is the tested node; it will be slow, and so it should switch to a higher round
-    // exponent
-    let mut slow_nodes = BTreeSet::new();
-    slow_nodes.insert(ALICE_PUBLIC_KEY.clone());
-
-    let mut env = ConsensusEnvironment::new(validators, slow_nodes);
-    for _ in 0..10 {
-        env.crank_round();
-    }
-
-    assert!(env.our_round_exp() > 0);
-}
-
-#[ignore = "TODO: unignore when exponent switching is improved"]
-#[test]
-fn slow_down_when_majority_slow() {
-    let mut validators = BTreeMap::new();
-    validators.insert(ALICE_PUBLIC_KEY.clone(), (ALICE_SIGNER.clone(), 100));
-    validators.insert(BOB_PUBLIC_KEY.clone(), (BOB_SIGNER.clone(), 100));
-    validators.insert(CAROL_PUBLIC_KEY.clone(), (CAROL_SIGNER.clone(), 100));
-    validators.insert(DAVE_PUBLIC_KEY.clone(), (DAVE_SIGNER.clone(), 100));
-    validators.insert(ELLEN_PUBLIC_KEY.clone(), (ELLEN_SIGNER.clone(), 100));
-
-    // Alice is the tested node; it will be slow, and so it should switch to a higher round
-    // exponent
-    let mut slow_nodes = BTreeSet::new();
-    slow_nodes.insert(CAROL_PUBLIC_KEY.clone());
-    slow_nodes.insert(DAVE_PUBLIC_KEY.clone());
-    slow_nodes.insert(ELLEN_PUBLIC_KEY.clone());
-
-    let mut env = ConsensusEnvironment::new(validators, slow_nodes);
-    for _ in 0..10 {
-        env.crank_round();
-    }
-
-    assert!(env.our_round_exp() > 0);
 }

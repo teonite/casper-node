@@ -16,8 +16,8 @@ use casper_types::{
     account::AccountHash,
     bytesrepr::{FromBytes, ToBytes},
     system::{mint::Error, Caller},
-    AccessRights, AddressableEntity, CLTyped, CLValue, Gas, HoldsEpoch, InitiatorAddr, Key, Phase,
-    PublicKey, StoredValue, SystemEntityRegistry, Transfer, TransferV2, URef, U512,
+    AccessRights, AddressableEntity, CLTyped, CLValue, Gas, InitiatorAddr, Key, Phase, PublicKey,
+    StoredValue, SystemEntityRegistry, Transfer, TransferV2, URef, U512,
 };
 
 impl<S> RuntimeProvider for RuntimeNative<S>
@@ -58,7 +58,7 @@ where
             .borrow_mut()
             .get_addressable_entity_by_account_hash(self.protocol_version(), account_hash)
         {
-            Ok(entity) => Ok(Some(entity)),
+            Ok((_, entity)) => Ok(Some(entity)),
             Err(tce) => {
                 error!(%tce, "error reading addressable entity by account hash");
                 Err(ProviderError::AddressableEntityByAccountHash(account_hash))
@@ -101,6 +101,10 @@ where
 
     fn allow_unrestricted_transfers(&self) -> bool {
         self.transfer_config().allow_unrestricted_transfers()
+    }
+
+    fn is_valid_uref(&self, uref: &URef) -> bool {
+        self.access_rights().has_access_rights_to_uref(uref)
     }
 }
 
@@ -183,18 +187,17 @@ where
         }
     }
 
-    fn available_balance(
-        &mut self,
-        purse: URef,
-        holds_epoch: HoldsEpoch,
-    ) -> Result<Option<U512>, Error> {
+    fn available_balance(&mut self, purse: URef) -> Result<Option<U512>, Error> {
         match self
             .tracking_copy()
             .borrow_mut()
-            .get_available_balance(Key::Balance(purse.addr()), holds_epoch)
+            .get_available_balance(Key::Balance(purse.addr()))
         {
             Ok(motes) => Ok(Some(motes.value())),
-            Err(_) => Err(Error::Storage),
+            Err(err) => {
+                error!(?err, "mint native available_balance");
+                Err(Error::Storage)
+            }
         }
     }
 
@@ -249,4 +252,21 @@ where
     }
 }
 
-impl<S> Mint for RuntimeNative<S> where S: StateReader<Key, StoredValue, Error = GlobalStateError> {}
+impl<S> Mint for RuntimeNative<S>
+where
+    S: StateReader<Key, StoredValue, Error = GlobalStateError>,
+{
+    fn purse_exists(&mut self, uref: URef) -> Result<bool, Error> {
+        let key = Key::Balance(uref.addr());
+        match self
+            .tracking_copy()
+            .borrow_mut()
+            .read(&key)
+            .map_err(|_| Error::Storage)?
+        {
+            Some(StoredValue::CLValue(value)) => Ok(*value.cl_type() == U512::cl_type()),
+            Some(_non_cl_value) => Err(Error::CLValue),
+            None => Ok(false),
+        }
+    }
+}

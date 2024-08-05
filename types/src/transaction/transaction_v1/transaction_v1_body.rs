@@ -12,25 +12,23 @@ use rand::{Rng, RngCore};
 use schemars::JsonSchema;
 #[cfg(any(feature = "std", test))]
 use serde::{Deserialize, Serialize};
-#[cfg(any(feature = "std", test))]
+#[cfg(any(all(feature = "std", feature = "testing"), test))]
 use tracing::debug;
 
 use super::super::{RuntimeArgs, TransactionEntryPoint, TransactionScheduling, TransactionTarget};
 
-#[cfg(any(all(feature = "std", feature = "testing"), test))]
 use super::TransactionCategory;
-#[cfg(any(feature = "std", test))]
+#[cfg(any(all(feature = "std", feature = "testing"), test))]
 use super::TransactionConfig;
 #[cfg(doc)]
 use super::TransactionV1;
-use crate::{
-    bytesrepr::{self, FromBytes, ToBytes},
-    TransactionSessionKind,
-};
+use crate::bytesrepr::{self, FromBytes, ToBytes};
 
-#[cfg(any(feature = "std", test))]
+#[cfg(any(all(feature = "std", feature = "testing"), test))]
 use crate::InvalidTransactionV1;
 
+#[cfg(any(all(feature = "std", feature = "testing"), test))]
+use crate::TransactionV1ExcessiveSizeError;
 #[cfg(any(all(feature = "std", feature = "testing"), test))]
 use crate::{
     bytesrepr::Bytes, testing::TestRng, PublicKey, TransactionInvocationTarget, TransactionRuntime,
@@ -54,6 +52,7 @@ pub struct TransactionV1Body {
     pub(super) args: RuntimeArgs,
     pub(super) target: TransactionTarget,
     pub(super) entry_point: TransactionEntryPoint,
+    pub(super) transaction_category: u8,
     pub(super) scheduling: TransactionScheduling,
 }
 
@@ -63,12 +62,14 @@ impl TransactionV1Body {
         args: RuntimeArgs,
         target: TransactionTarget,
         entry_point: TransactionEntryPoint,
+        transaction_category: u8,
         scheduling: TransactionScheduling,
     ) -> Self {
         TransactionV1Body {
             args,
             target,
             entry_point,
+            transaction_category,
             scheduling,
         }
     }
@@ -100,40 +101,22 @@ impl TransactionV1Body {
 
     /// Returns true if this transaction is a native mint interaction.
     pub fn is_native_mint(&self) -> bool {
-        TransactionTarget::Native == self.target
-            && TransactionEntryPoint::Transfer == self.entry_point
+        self.transaction_category == TransactionCategory::Mint as u8
     }
 
     /// Returns true if this transaction is a native auction interaction.
     pub fn is_native_auction(&self) -> bool {
-        if TransactionTarget::Native != self.target {
-            return false;
-        }
-        match self.entry_point {
-            TransactionEntryPoint::Custom(_) | TransactionEntryPoint::Transfer => false,
-            TransactionEntryPoint::AddBid
-            | TransactionEntryPoint::WithdrawBid
-            | TransactionEntryPoint::ActivateBid
-            | TransactionEntryPoint::Delegate
-            | TransactionEntryPoint::Undelegate
-            | TransactionEntryPoint::Redelegate => true,
-        }
+        self.transaction_category == TransactionCategory::Auction as u8
     }
 
     /// Returns true if this transaction is a smart contract installer or upgrader.
     pub fn is_install_or_upgrade(&self) -> bool {
-        match self.target() {
-            TransactionTarget::Native | TransactionTarget::Stored { .. } => false,
-            TransactionTarget::Session { kind, .. } => match kind {
-                TransactionSessionKind::Standard | TransactionSessionKind::Isolated => false,
-                TransactionSessionKind::Installer | TransactionSessionKind::Upgrader => true,
-            },
-        }
+        self.transaction_category == TransactionCategory::InstallUpgrade as u8
     }
 
-    /// Returns true if this transaction goes into the misc / standard category.
-    pub fn is_standard(&self) -> bool {
-        !self.is_native_mint() && !self.is_native_auction() && !self.is_install_or_upgrade()
+    /// Returns the transaction category.
+    pub fn transaction_category(&self) -> u8 {
+        self.transaction_category
     }
 
     /// Consumes `self`, returning its constituent parts.
@@ -148,23 +131,50 @@ impl TransactionV1Body {
         (self.args, self.target, self.entry_point, self.scheduling)
     }
 
-    #[cfg(any(feature = "std", test))]
+    #[cfg(any(all(feature = "std", feature = "testing"), test))]
     pub(super) fn is_valid(&self, config: &TransactionConfig) -> Result<(), InvalidTransactionV1> {
+        let kind = self.transaction_category;
+        if !config.transaction_v1_config.is_supported(kind) {
+            return Err(InvalidTransactionV1::InvalidTransactionKind(
+                self.transaction_category,
+            ));
+        }
+
+        let max_serialized_length = config.transaction_v1_config.get_max_serialized_length(kind);
+        let actual_length = self.serialized_length();
+        if actual_length > max_serialized_length as usize {
+            return Err(InvalidTransactionV1::ExcessiveSize(
+                TransactionV1ExcessiveSizeError {
+                    max_transaction_size: max_serialized_length as u32,
+                    actual_transaction_size: actual_length,
+                },
+            ));
+        }
+
+        let max_args_length = config.transaction_v1_config.get_max_args_length(kind);
+
         let args_length = self.args.serialized_length();
-        if args_length > config.transaction_v1_config.max_args_length as usize {
+        if args_length > max_args_length as usize {
             debug!(
                 args_length,
-                max_args_length = config.transaction_v1_config.max_args_length,
+                max_args_length = max_args_length,
                 "transaction runtime args excessive size"
             );
             return Err(InvalidTransactionV1::ExcessiveArgsLength {
-                max_length: config.transaction_v1_config.max_args_length as usize,
+                max_length: max_args_length as usize,
                 got: args_length,
             });
         }
 
         match &self.target {
             TransactionTarget::Native => match self.entry_point {
+                TransactionEntryPoint::Call => {
+                    debug!(
+                        entry_point = %self.entry_point,
+                        "native transaction cannot have call entry point"
+                    );
+                    Err(InvalidTransactionV1::EntryPointCannotBeCall)
+                }
                 TransactionEntryPoint::Custom(_) => {
                     debug!(
                         entry_point = %self.entry_point,
@@ -194,16 +204,21 @@ impl TransactionV1Body {
                 TransactionEntryPoint::ActivateBid => {
                     arg_handling::has_valid_activate_bid_args(&self.args)
                 }
+                TransactionEntryPoint::ChangeBidPublicKey => {
+                    arg_handling::has_valid_change_bid_public_key_args(&self.args)
+                }
             },
             TransactionTarget::Stored { .. } => match &self.entry_point {
                 TransactionEntryPoint::Custom(_) => Ok(()),
-                TransactionEntryPoint::Transfer
+                TransactionEntryPoint::Call
+                | TransactionEntryPoint::Transfer
                 | TransactionEntryPoint::AddBid
                 | TransactionEntryPoint::WithdrawBid
                 | TransactionEntryPoint::Delegate
                 | TransactionEntryPoint::Undelegate
                 | TransactionEntryPoint::Redelegate
-                | TransactionEntryPoint::ActivateBid => {
+                | TransactionEntryPoint::ActivateBid
+                | TransactionEntryPoint::ChangeBidPublicKey => {
                     debug!(
                         entry_point = %self.entry_point,
                         "transaction targeting stored entity/package must have custom entry point"
@@ -214,7 +229,7 @@ impl TransactionV1Body {
                 }
             },
             TransactionTarget::Session { module_bytes, .. } => match &self.entry_point {
-                TransactionEntryPoint::Custom(_) => {
+                TransactionEntryPoint::Call | TransactionEntryPoint::Custom(_) => {
                     if module_bytes.is_empty() {
                         debug!("transaction with session code must not have empty module bytes");
                         return Err(InvalidTransactionV1::EmptyModuleBytes);
@@ -227,10 +242,11 @@ impl TransactionV1Body {
                 | TransactionEntryPoint::Delegate
                 | TransactionEntryPoint::Undelegate
                 | TransactionEntryPoint::Redelegate
-                | TransactionEntryPoint::ActivateBid => {
+                | TransactionEntryPoint::ActivateBid
+                | TransactionEntryPoint::ChangeBidPublicKey => {
                     debug!(
                         entry_point = %self.entry_point,
-                        "transaction with session code must have custom entry point"
+                        "transaction with session code must use custom or default 'call' entry point"
                     );
                     Err(InvalidTransactionV1::EntryPointMustBeCustom {
                         entry_point: self.entry_point.clone(),
@@ -242,12 +258,12 @@ impl TransactionV1Body {
 
     /// Returns a random `TransactionV1Body`.
     #[cfg(any(all(feature = "std", feature = "testing"), test))]
-    pub fn random_of_category(rng: &mut TestRng, category: &TransactionCategory) -> Self {
+    pub fn random_of_category(rng: &mut TestRng, category: u8) -> Self {
         match category {
-            TransactionCategory::InstallUpgrade => Self::random_install_upgrade(rng),
-            TransactionCategory::Standard => Self::random_standard(rng),
-            TransactionCategory::Auction => Self::random_staking(rng),
-            TransactionCategory::Mint => Self::random_transfer(rng),
+            0 => Self::random_transfer(rng),
+            1 => Self::random_staking(rng),
+            2 => Self::random_install_upgrade(rng),
+            _ => Self::random_standard(rng),
         }
     }
 
@@ -263,6 +279,7 @@ impl TransactionV1Body {
             args,
             TransactionTarget::Native,
             TransactionEntryPoint::Transfer,
+            TransactionCategory::Mint as u8,
             TransactionScheduling::random(rng),
         )
     }
@@ -277,6 +294,7 @@ impl TransactionV1Body {
             RuntimeArgs::random(rng),
             target,
             TransactionEntryPoint::Custom(rng.random_string(1..11)),
+            TransactionCategory::Large as u8,
             TransactionScheduling::random(rng),
         )
     }
@@ -284,7 +302,6 @@ impl TransactionV1Body {
     #[cfg(any(all(feature = "std", feature = "testing"), test))]
     fn random_install_upgrade(rng: &mut TestRng) -> Self {
         let target = TransactionTarget::Session {
-            kind: TransactionSessionKind::Upgrader,
             module_bytes: Bytes::from(rng.random_vec(0..100)),
             runtime: TransactionRuntime::VmCasperV1,
         };
@@ -292,6 +309,7 @@ impl TransactionV1Body {
             RuntimeArgs::random(rng),
             target,
             TransactionEntryPoint::Custom(rng.random_string(1..11)),
+            TransactionCategory::InstallUpgrade as u8,
             TransactionScheduling::random(rng),
         )
     }
@@ -301,11 +319,21 @@ impl TransactionV1Body {
         let public_key = PublicKey::random(rng);
         let delegation_rate = rng.gen();
         let amount = rng.gen::<u64>();
-        let args = arg_handling::new_add_bid_args(public_key, delegation_rate, amount).unwrap();
+        let minimum_delegation_amount = rng.gen::<u32>() as u64;
+        let maximum_delegation_amount = minimum_delegation_amount + rng.gen::<u32>() as u64;
+        let args = arg_handling::new_add_bid_args(
+            public_key,
+            delegation_rate,
+            amount,
+            minimum_delegation_amount,
+            maximum_delegation_amount,
+        )
+        .unwrap();
         TransactionV1Body::new(
             args,
             TransactionTarget::Native,
             TransactionEntryPoint::AddBid,
+            TransactionCategory::Auction as u8,
             TransactionScheduling::random(rng),
         )
     }
@@ -327,6 +355,7 @@ impl TransactionV1Body {
                     args,
                     TransactionTarget::Native,
                     TransactionEntryPoint::Transfer,
+                    TransactionCategory::Mint as u8,
                     TransactionScheduling::random(rng),
                 )
             }
@@ -334,12 +363,21 @@ impl TransactionV1Body {
                 let public_key = PublicKey::random(rng);
                 let delegation_rate = rng.gen();
                 let amount = rng.gen::<u64>();
-                let args =
-                    arg_handling::new_add_bid_args(public_key, delegation_rate, amount).unwrap();
+                let minimum_delegation_amount = rng.gen::<u32>() as u64;
+                let maximum_delegation_amount = minimum_delegation_amount + rng.gen::<u32>() as u64;
+                let args = arg_handling::new_add_bid_args(
+                    public_key,
+                    delegation_rate,
+                    amount,
+                    minimum_delegation_amount,
+                    maximum_delegation_amount,
+                )
+                .unwrap();
                 TransactionV1Body::new(
                     args,
                     TransactionTarget::Native,
                     TransactionEntryPoint::AddBid,
+                    TransactionCategory::Auction as u8,
                     TransactionScheduling::random(rng),
                 )
             }
@@ -351,6 +389,7 @@ impl TransactionV1Body {
                     args,
                     TransactionTarget::Native,
                     TransactionEntryPoint::WithdrawBid,
+                    TransactionCategory::Auction as u8,
                     TransactionScheduling::random(rng),
                 )
             }
@@ -363,6 +402,7 @@ impl TransactionV1Body {
                     args,
                     TransactionTarget::Native,
                     TransactionEntryPoint::Delegate,
+                    TransactionCategory::Auction as u8,
                     TransactionScheduling::random(rng),
                 )
             }
@@ -375,6 +415,7 @@ impl TransactionV1Body {
                     args,
                     TransactionTarget::Native,
                     TransactionEntryPoint::Undelegate,
+                    TransactionCategory::Auction as u8,
                     TransactionScheduling::random(rng),
                 )
             }
@@ -390,6 +431,7 @@ impl TransactionV1Body {
                     args,
                     TransactionTarget::Native,
                     TransactionEntryPoint::Redelegate,
+                    TransactionCategory::Auction as u8,
                     TransactionScheduling::random(rng),
                 )
             }
@@ -398,7 +440,6 @@ impl TransactionV1Body {
                 let mut buffer = vec![0u8; rng.gen_range(1..100)];
                 rng.fill_bytes(buffer.as_mut());
                 let target = TransactionTarget::Session {
-                    kind: TransactionSessionKind::random(rng),
                     module_bytes: Bytes::from(buffer),
                     runtime: TransactionRuntime::VmCasperV1,
                 };
@@ -406,6 +447,7 @@ impl TransactionV1Body {
                     RuntimeArgs::random(rng),
                     target,
                     TransactionEntryPoint::Custom(rng.random_string(1..11)),
+                    TransactionCategory::Large as u8,
                     TransactionScheduling::random(rng),
                 )
             }
@@ -435,6 +477,7 @@ impl ToBytes for TransactionV1Body {
         self.args.serialized_length()
             + self.target.serialized_length()
             + self.entry_point.serialized_length()
+            + self.transaction_category.serialized_length()
             + self.scheduling.serialized_length()
     }
 
@@ -442,6 +485,7 @@ impl ToBytes for TransactionV1Body {
         self.args.write_bytes(writer)?;
         self.target.write_bytes(writer)?;
         self.entry_point.write_bytes(writer)?;
+        self.transaction_category.write_bytes(writer)?;
         self.scheduling.write_bytes(writer)
     }
 }
@@ -451,8 +495,9 @@ impl FromBytes for TransactionV1Body {
         let (args, remainder) = RuntimeArgs::from_bytes(bytes)?;
         let (target, remainder) = TransactionTarget::from_bytes(remainder)?;
         let (entry_point, remainder) = TransactionEntryPoint::from_bytes(remainder)?;
+        let (kind, remainder) = u8::from_bytes(remainder)?;
         let (scheduling, remainder) = TransactionScheduling::from_bytes(remainder)?;
-        let body = TransactionV1Body::new(args, target, entry_point, scheduling);
+        let body = TransactionV1Body::new(args, target, entry_point, kind, scheduling);
         Ok((body, remainder))
     }
 }
@@ -473,8 +518,9 @@ mod tests {
     fn not_acceptable_due_to_excessive_args_length() {
         let rng = &mut TestRng::new();
         let mut config = TransactionConfig::default();
-        config.transaction_v1_config.max_args_length = 10;
-        let mut body = TransactionV1Body::random(rng);
+        let mut body = TransactionV1Body::random_standard(rng);
+        config.transaction_v1_config.wasm_lanes =
+            vec![vec![body.transaction_category as u64, 1_048_576, 10, 0]];
         body.args = runtime_args! {"a" => 1_u8};
 
         let expected_error = InvalidTransactionV1::ExcessiveArgsLength {
@@ -482,7 +528,7 @@ mod tests {
             got: 15,
         };
 
-        assert_eq!(body.is_valid(&config,), Err(expected_error));
+        assert_eq!(body.is_valid(&config), Err(expected_error));
     }
 
     #[test]
@@ -491,15 +537,37 @@ mod tests {
         let public_key = PublicKey::random(rng);
         let amount = rng.gen::<u64>();
         let args = arg_handling::new_withdraw_bid_args(public_key, amount).unwrap();
-        let entry_point = TransactionEntryPoint::Custom("call".to_string());
+        let entry_point = TransactionEntryPoint::Custom("custom".to_string());
         let body = TransactionV1Body::new(
             args,
             TransactionTarget::Native,
             entry_point.clone(),
+            TransactionCategory::Mint as u8,
             TransactionScheduling::random(rng),
         );
 
         let expected_error = InvalidTransactionV1::EntryPointCannotBeCustom { entry_point };
+
+        let config = TransactionConfig::default();
+        assert_eq!(body.is_valid(&config), Err(expected_error));
+    }
+
+    #[test]
+    fn not_acceptable_due_to_call_entry_point_in_native() {
+        let rng = &mut TestRng::new();
+        let public_key = PublicKey::random(rng);
+        let amount = rng.gen::<u64>();
+        let args = arg_handling::new_withdraw_bid_args(public_key, amount).unwrap();
+        let entry_point = TransactionEntryPoint::Call;
+        let body = TransactionV1Body::new(
+            args,
+            TransactionTarget::Native,
+            entry_point,
+            TransactionCategory::Mint as u8,
+            TransactionScheduling::random(rng),
+        );
+
+        let expected_error = InvalidTransactionV1::EntryPointCannotBeCall;
 
         let config = TransactionConfig::default();
         assert_eq!(body.is_valid(&config,), Err(expected_error));
@@ -516,7 +584,6 @@ mod tests {
                 TransactionRuntime::VmCasperV1,
             );
             let session_target = TransactionTarget::new_session(
-                TransactionSessionKind::Standard,
                 Bytes::from(vec![1]),
                 TransactionRuntime::VmCasperV1,
             );
@@ -525,19 +592,21 @@ mod tests {
                 RuntimeArgs::new(),
                 stored_target,
                 entry_point.clone(),
+                TransactionCategory::Large as u8,
                 TransactionScheduling::random(rng),
             );
             let session_body = TransactionV1Body::new(
                 RuntimeArgs::new(),
                 session_target,
                 entry_point.clone(),
+                TransactionCategory::Large as u8,
                 TransactionScheduling::random(rng),
             );
 
             let expected_error = InvalidTransactionV1::EntryPointMustBeCustom { entry_point };
 
-            assert_eq!(stored_body.is_valid(&config,), Err(expected_error.clone()));
-            assert_eq!(session_body.is_valid(&config,), Err(expected_error));
+            assert_eq!(stored_body.is_valid(&config), Err(expected_error.clone()));
+            assert_eq!(session_body.is_valid(&config), Err(expected_error));
         };
 
         check(TransactionEntryPoint::Transfer);

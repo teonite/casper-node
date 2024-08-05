@@ -22,7 +22,7 @@ use casper_types::{
         ARG_DELEGATOR, ARG_PUBLIC_KEY, ARG_REWARDS_MAP, ARG_VALIDATOR, DELEGATION_RATE_DENOMINATOR,
         METHOD_DISTRIBUTE, SEIGNIORAGE_RECIPIENTS_SNAPSHOT_KEY,
     },
-    EntityAddr, EraId, HoldsEpoch, Key, ProtocolVersion, PublicKey, SecretKey, Timestamp, U512,
+    EntityAddr, EraId, Key, ProtocolVersion, PublicKey, SecretKey, Timestamp, U512,
 };
 
 const ARG_ENTRY_POINT: &str = "entry_point";
@@ -96,8 +96,8 @@ fn withdraw_bid(
 ) {
     let auction = builder.get_auction_contract_hash();
     let withdraw_bid_args = runtime_args! {
-        auction::ARG_PUBLIC_KEY => validator,
-        auction::ARG_AMOUNT => amount,
+        ARG_PUBLIC_KEY => validator,
+        ARG_AMOUNT => amount,
     };
     let withdraw_bid_request = ExecuteRequestBuilder::contract_call_by_hash(
         sender,
@@ -118,9 +118,9 @@ fn undelegate(
 ) {
     let auction = builder.get_auction_contract_hash();
     let undelegate_args = runtime_args! {
-        auction::ARG_DELEGATOR => delegator,
-        auction::ARG_VALIDATOR => validator,
-        auction::ARG_AMOUNT => amount,
+        ARG_DELEGATOR => delegator,
+        ARG_VALIDATOR => validator,
+        ARG_AMOUNT => amount,
     };
     let undelegate_request = ExecuteRequestBuilder::contract_call_by_hash(
         sender,
@@ -256,7 +256,7 @@ fn should_distribute_delegation_rate_zero() {
 
     let protocol_version = DEFAULT_PROTOCOL_VERSION;
     // initial token supply
-    let initial_supply = builder.total_supply(None, protocol_version);
+    let initial_supply = builder.total_supply(protocol_version, None);
     let total_payout = builder.base_round_reward(None, protocol_version);
     let expected_total_reward = *GENESIS_ROUND_SEIGNIORAGE_RATE * initial_supply;
     let expected_total_reward_integer = expected_total_reward.to_integer();
@@ -280,7 +280,7 @@ fn should_distribute_delegation_rate_zero() {
     }
 
     let mut rewards = BTreeMap::new();
-    rewards.insert(VALIDATOR_1.clone(), total_payout);
+    rewards.insert(VALIDATOR_1.clone(), vec![total_payout]);
 
     let distribute_request = ExecuteRequestBuilder::contract_call_by_hash(
         *SYSTEM_ADDR,
@@ -378,27 +378,22 @@ fn should_distribute_delegation_rate_zero() {
             VALIDATOR_1.clone(),
             validator_1_actual_payout + U512::from(VALIDATOR_1_STAKE),
         );
-        assert!(get_validator_bid(&mut builder, VALIDATOR_1.clone()).is_none());
-        U512::zero()
+        get_validator_bid(&mut builder, VALIDATOR_1.clone())
+            .expect("should still have zero bid")
+            .staked_amount()
     };
     assert_eq!(validator_1_balance, U512::zero());
 
-    let delegator_1_balance = {
-        assert!(
-            get_delegator_bid(&mut builder, VALIDATOR_1.clone(), DELEGATOR_1.clone()).is_none(),
-            "validator withdrawing full stake also removes delegator 1 reinvested funds"
-        );
-        U512::zero()
-    };
+    let delegator_1_balance =
+        get_delegator_bid(&mut builder, VALIDATOR_1.clone(), DELEGATOR_1.clone())
+            .expect("validator withdrawing full stake also removes delegator 1 reinvested funds")
+            .staked_amount();
     assert_eq!(delegator_1_balance, U512::zero());
 
-    let delegator_2_balance = {
-        assert!(
-            get_delegator_bid(&mut builder, VALIDATOR_1.clone(), DELEGATOR_2.clone()).is_none(),
-            "validator withdrawing full stake also removes delegator 2 reinvested funds"
-        );
-        U512::zero()
-    };
+    let delegator_2_balance =
+        get_delegator_bid(&mut builder, VALIDATOR_1.clone(), DELEGATOR_2.clone())
+            .expect("validator withdrawing full stake also removes delegator 1 reinvested funds")
+            .staked_amount();
     assert!(delegator_2_balance.is_zero());
 
     let era_info = get_era_info(&mut builder);
@@ -524,7 +519,7 @@ fn should_withdraw_bids_after_distribute() {
     let total_payout = builder.base_round_reward(None, protocol_version);
 
     // initial token supply
-    let initial_supply = builder.total_supply(None, protocol_version);
+    let initial_supply = builder.total_supply(protocol_version, None);
     let rate = builder.round_seigniorage_rate(None, protocol_version);
 
     let expected_total_reward = rate * initial_supply;
@@ -550,7 +545,7 @@ fn should_withdraw_bids_after_distribute() {
     }
 
     let mut rewards = BTreeMap::new();
-    rewards.insert(VALIDATOR_1.clone(), total_payout);
+    rewards.insert(VALIDATOR_1.clone(), vec![total_payout]);
 
     let distribute_request = ExecuteRequestBuilder::contract_call_by_hash(
         *SYSTEM_ADDR,
@@ -656,7 +651,10 @@ fn should_withdraw_bids_after_distribute() {
             undelegate_amount,
         );
         assert!(
-            get_delegator_bid(&mut builder, VALIDATOR_1.clone(), DELEGATOR_1.clone()).is_none(),
+            get_delegator_bid(&mut builder, VALIDATOR_1.clone(), DELEGATOR_1.clone())
+                .expect("should still have zero bid")
+                .staked_amount()
+                .is_zero(),
             "delegator 1 did not unstake full expected amount"
         );
         delegator_1_actual_payout
@@ -680,7 +678,10 @@ fn should_withdraw_bids_after_distribute() {
             undelegate_amount,
         );
         assert!(
-            get_delegator_bid(&mut builder, VALIDATOR_1.clone(), DELEGATOR_2.clone()).is_none(),
+            get_delegator_bid(&mut builder, VALIDATOR_1.clone(), DELEGATOR_2.clone())
+                .expect("should still have zero bid")
+                .staked_amount()
+                .is_zero(),
             "delegator 2 did not unstake full expected amount"
         );
         delegator_2_actual_payout
@@ -703,7 +704,10 @@ fn should_withdraw_bids_after_distribute() {
             withdraw_bid_amount,
         );
 
-        assert!(get_validator_bid(&mut builder, VALIDATOR_1.clone()).is_none());
+        assert!(get_validator_bid(&mut builder, VALIDATOR_1.clone())
+            .expect("should still have zero bid")
+            .staked_amount()
+            .is_zero());
 
         withdraw_bid_amount
     };
@@ -830,7 +834,7 @@ fn should_distribute_rewards_after_restaking_delegated_funds() {
 
     let protocol_version = DEFAULT_PROTOCOL_VERSION;
     // initial token supply
-    let initial_supply = builder.total_supply(None, protocol_version);
+    let initial_supply = builder.total_supply(protocol_version, None);
     let initial_rate = builder.round_seigniorage_rate(None, protocol_version);
     let initial_round_reward = builder.base_round_reward(None, protocol_version);
 
@@ -859,7 +863,7 @@ fn should_distribute_rewards_after_restaking_delegated_funds() {
     for idx in 0..10 {
         let rewards = {
             let mut rewards = BTreeMap::new();
-            rewards.insert(VALIDATOR_1.clone(), round_reward);
+            rewards.insert(VALIDATOR_1.clone(), vec![round_reward]);
             rewards
         };
 
@@ -978,7 +982,7 @@ fn should_distribute_rewards_after_restaking_delegated_funds() {
         ));
 
         // Next round of rewards
-        let updated_supply = builder.total_supply(None, protocol_version);
+        let updated_supply = builder.total_supply(protocol_version, None);
         assert!(updated_supply > total_supply);
         total_supply = updated_supply;
 
@@ -1009,11 +1013,9 @@ fn should_distribute_rewards_after_restaking_delegated_funds() {
             (*DELEGATOR_2_ADDR).into(),
             AuctionMethod::Delegate {
                 max_delegators_per_validator: u32::MAX,
-                minimum_delegation_amount: updelegate_amount.as_u64(),
                 validator: VALIDATOR_1.clone(),
                 delegator: DELEGATOR_2.clone(),
                 amount: updelegate_amount,
-                holds_epoch: HoldsEpoch::NOT_APPLICABLE,
             },
         );
         assert!(updelegate_result.is_success(), "{:?}", updelegate_result);
@@ -1028,7 +1030,8 @@ fn should_distribute_rewards_after_restaking_delegated_funds() {
                     public_key: VALIDATOR_1.clone(),
                     amount,
                     delegation_rate: 0,
-                    holds_epoch: HoldsEpoch::NOT_APPLICABLE,
+                    minimum_delegation_amount: updelegate_amount.as_u64(),
+                    maximum_delegation_amount: updelegate_amount.as_u64(),
                 }
             } else {
                 AuctionMethod::WithdrawBid {
@@ -1153,7 +1156,7 @@ fn should_distribute_delegation_rate_half() {
 
     let protocol_version = DEFAULT_PROTOCOL_VERSION;
     // initial token supply
-    let initial_supply = builder.total_supply(None, protocol_version);
+    let initial_supply = builder.total_supply(protocol_version, None);
     let total_payout = builder.base_round_reward(None, protocol_version);
     let expected_total_reward = *GENESIS_ROUND_SEIGNIORAGE_RATE * initial_supply;
     let expected_total_reward_integer = expected_total_reward.to_integer();
@@ -1178,7 +1181,7 @@ fn should_distribute_delegation_rate_half() {
     }
 
     let mut rewards = BTreeMap::new();
-    rewards.insert(VALIDATOR_1.clone(), total_payout);
+    rewards.insert(VALIDATOR_1.clone(), vec![total_payout]);
 
     let distribute_request = ExecuteRequestBuilder::contract_call_by_hash(
         *SYSTEM_ADDR,
@@ -1340,6 +1343,8 @@ fn should_distribute_delegation_rate_full() {
             ARG_AMOUNT => U512::from(VALIDATOR_1_STAKE),
             ARG_DELEGATION_RATE => VALIDATOR_1_DELEGATION_RATE,
             ARG_PUBLIC_KEY => VALIDATOR_1.clone(),
+            auction::ARG_MINIMUM_DELEGATION_AMOUNT => 10,
+            auction::ARG_MAXIMUM_DELEGATION_AMOUNT => DELEGATOR_2_STAKE + 1,
         },
     )
     .build();
@@ -1385,7 +1390,7 @@ fn should_distribute_delegation_rate_full() {
 
     let protocol_version = DEFAULT_PROTOCOL_VERSION;
     // initial token supply
-    let initial_supply = builder.total_supply(None, protocol_version);
+    let initial_supply = builder.total_supply(protocol_version, None);
     let expected_total_reward = *GENESIS_ROUND_SEIGNIORAGE_RATE * initial_supply;
     let expected_total_reward_integer = expected_total_reward.to_integer();
 
@@ -1399,7 +1404,7 @@ fn should_distribute_delegation_rate_full() {
     }
 
     let mut rewards = BTreeMap::new();
-    rewards.insert(VALIDATOR_1.clone(), expected_total_reward_integer);
+    rewards.insert(VALIDATOR_1.clone(), vec![expected_total_reward_integer]);
 
     let distribute_request = ExecuteRequestBuilder::contract_call_by_hash(
         *SYSTEM_ADDR,
@@ -1567,7 +1572,7 @@ fn should_distribute_uneven_delegation_rate_zero() {
 
     let protocol_version = DEFAULT_PROTOCOL_VERSION;
     // initial token supply
-    let initial_supply = builder.total_supply(None, protocol_version);
+    let initial_supply = builder.total_supply(protocol_version, None);
     let total_payout = builder.base_round_reward(None, protocol_version);
     let expected_total_reward = *GENESIS_ROUND_SEIGNIORAGE_RATE * initial_supply;
     let expected_total_reward_integer = expected_total_reward.to_integer();
@@ -1592,7 +1597,7 @@ fn should_distribute_uneven_delegation_rate_zero() {
     }
 
     let mut rewards = BTreeMap::new();
-    rewards.insert(VALIDATOR_1.clone(), total_payout);
+    rewards.insert(VALIDATOR_1.clone(), vec![total_payout]);
 
     let distribute_request = ExecuteRequestBuilder::contract_call_by_hash(
         *SYSTEM_ADDR,
@@ -1870,7 +1875,7 @@ fn should_distribute_with_multiple_validators_and_delegators() {
 
     let protocol_version = DEFAULT_PROTOCOL_VERSION;
     // initial token supply
-    let initial_supply = builder.total_supply(None, protocol_version);
+    let initial_supply = builder.total_supply(protocol_version, None);
     let total_payout = builder.base_round_reward(None, protocol_version);
     let expected_total_reward = *GENESIS_ROUND_SEIGNIORAGE_RATE * initial_supply;
     let expected_total_reward_integer = expected_total_reward.to_integer();
@@ -1895,7 +1900,7 @@ fn should_distribute_with_multiple_validators_and_delegators() {
     }
 
     let mut rewards = BTreeMap::new();
-    rewards.insert(VALIDATOR_1.clone(), total_payout);
+    rewards.insert(VALIDATOR_1.clone(), vec![total_payout]);
 
     // Validator 1 distribution
     let distribute_request = ExecuteRequestBuilder::contract_call_by_hash(
@@ -1954,7 +1959,7 @@ fn should_distribute_with_multiple_validators_and_delegators() {
     ));
 
     let mut rewards = BTreeMap::new();
-    rewards.insert(VALIDATOR_2.clone(), total_payout);
+    rewards.insert(VALIDATOR_2.clone(), vec![total_payout]);
 
     // Validator 2 distribution
     let distribute_request = ExecuteRequestBuilder::contract_call_by_hash(
@@ -2000,7 +2005,7 @@ fn should_distribute_with_multiple_validators_and_delegators() {
     ));
 
     let mut rewards = BTreeMap::new();
-    rewards.insert(VALIDATOR_3.clone(), total_payout);
+    rewards.insert(VALIDATOR_3.clone(), vec![total_payout]);
 
     // Validator 3 distribution
     let distribute_request = ExecuteRequestBuilder::contract_call_by_hash(
@@ -2202,7 +2207,7 @@ fn should_distribute_with_multiple_validators_and_shared_delegator() {
 
     let protocol_version = DEFAULT_PROTOCOL_VERSION;
     // initial token supply
-    let initial_supply = builder.total_supply(None, protocol_version);
+    let initial_supply = builder.total_supply(protocol_version, None);
     let total_payout = builder.base_round_reward(None, protocol_version);
     let expected_total_reward = *GENESIS_ROUND_SEIGNIORAGE_RATE * initial_supply;
     let expected_total_reward_integer = expected_total_reward.to_integer();
@@ -2226,9 +2231,9 @@ fn should_distribute_with_multiple_validators_and_shared_delegator() {
     }
 
     let mut rewards = BTreeMap::new();
-    rewards.insert(VALIDATOR_1.clone(), total_payout);
-    rewards.insert(VALIDATOR_2.clone(), total_payout);
-    rewards.insert(VALIDATOR_3.clone(), total_payout);
+    rewards.insert(VALIDATOR_1.clone(), vec![total_payout]);
+    rewards.insert(VALIDATOR_2.clone(), vec![total_payout]);
+    rewards.insert(VALIDATOR_3.clone(), vec![total_payout]);
 
     let distribute_request = ExecuteRequestBuilder::contract_call_by_hash(
         *SYSTEM_ADDR,
@@ -2559,13 +2564,13 @@ fn should_increase_total_supply_after_distribute() {
 
     let protocol_version = DEFAULT_PROTOCOL_VERSION;
     // initial token supply
-    let initial_supply = builder.total_supply(None, protocol_version);
+    let initial_supply = builder.total_supply(protocol_version, None);
 
     for request in post_genesis_requests {
         builder.exec(request).commit().expect_success();
     }
 
-    let post_genesis_supply = builder.total_supply(None, protocol_version);
+    let post_genesis_supply = builder.total_supply(protocol_version, None);
 
     assert_eq!(
         initial_supply, post_genesis_supply,
@@ -2578,7 +2583,7 @@ fn should_increase_total_supply_after_distribute() {
         timestamp_millis += TIMESTAMP_MILLIS_INCREMENT;
     }
 
-    let post_auction_supply = builder.total_supply(None, protocol_version);
+    let post_auction_supply = builder.total_supply(protocol_version, None);
     assert_eq!(
         initial_supply, post_auction_supply,
         "total supply should remain unchanged regardless of auction"
@@ -2587,9 +2592,9 @@ fn should_increase_total_supply_after_distribute() {
     let total_payout = U512::from(1_000_000_000_000_u64);
 
     let mut rewards = BTreeMap::new();
-    rewards.insert(VALIDATOR_1.clone(), total_payout);
-    rewards.insert(VALIDATOR_2.clone(), total_payout);
-    rewards.insert(VALIDATOR_3.clone(), total_payout);
+    rewards.insert(VALIDATOR_1.clone(), vec![total_payout]);
+    rewards.insert(VALIDATOR_2.clone(), vec![total_payout]);
+    rewards.insert(VALIDATOR_3.clone(), vec![total_payout]);
 
     for _ in 0..5 {
         let distribute_request = ExecuteRequestBuilder::contract_call_by_hash(
@@ -2605,7 +2610,7 @@ fn should_increase_total_supply_after_distribute() {
 
         builder.exec(distribute_request).expect_success().commit();
 
-        let post_distribute_supply = builder.total_supply(None, protocol_version);
+        let post_distribute_supply = builder.total_supply(protocol_version, None);
         assert!(
             initial_supply < post_distribute_supply,
             "total supply should increase after distribute ({} >= {})",
@@ -2739,13 +2744,13 @@ fn should_not_create_purses_during_distribute() {
 
     let protocol_version = DEFAULT_PROTOCOL_VERSION;
     // initial token supply
-    let initial_supply = builder.total_supply(None, protocol_version);
+    let initial_supply = builder.total_supply(protocol_version, None);
 
     for request in post_genesis_requests {
         builder.exec(request).commit().expect_success();
     }
 
-    let post_genesis_supply = builder.total_supply(None, protocol_version);
+    let post_genesis_supply = builder.total_supply(protocol_version, None);
 
     assert_eq!(
         initial_supply, post_genesis_supply,
@@ -2758,7 +2763,7 @@ fn should_not_create_purses_during_distribute() {
         timestamp_millis += TIMESTAMP_MILLIS_INCREMENT;
     }
 
-    let post_auction_supply = builder.total_supply(None, protocol_version);
+    let post_auction_supply = builder.total_supply(protocol_version, None);
     assert_eq!(
         initial_supply, post_auction_supply,
         "total supply should remain unchanged regardless of auction"
@@ -2767,7 +2772,7 @@ fn should_not_create_purses_during_distribute() {
     let total_payout = U512::from(1_000_000_000_000_u64);
 
     let mut rewards = BTreeMap::new();
-    rewards.insert(VALIDATOR_1.clone(), total_payout);
+    rewards.insert(VALIDATOR_1.clone(), vec![total_payout]);
 
     let distribute_request = ExecuteRequestBuilder::contract_call_by_hash(
         *SYSTEM_ADDR,
@@ -2791,7 +2796,7 @@ fn should_not_create_purses_during_distribute() {
         number_of_purses_before_distribute
     );
 
-    let post_distribute_supply = builder.total_supply(None, protocol_version);
+    let post_distribute_supply = builder.total_supply(protocol_version, None);
     assert!(
         initial_supply < post_distribute_supply,
         "total supply should increase after distribute ({} >= {})",
@@ -2901,7 +2906,7 @@ fn should_distribute_delegation_rate_full_after_upgrading() {
 
     let protocol_version = DEFAULT_PROTOCOL_VERSION;
     // initial token supply
-    let initial_supply = builder.total_supply(None, protocol_version);
+    let initial_supply = builder.total_supply(protocol_version, None);
     let expected_total_reward_before = *GENESIS_ROUND_SEIGNIORAGE_RATE * initial_supply;
     let expected_total_reward_integer = expected_total_reward_before.to_integer();
 
@@ -2915,7 +2920,7 @@ fn should_distribute_delegation_rate_full_after_upgrading() {
     }
 
     let mut rewards = BTreeMap::new();
-    rewards.insert(VALIDATOR_1.clone(), expected_total_reward_integer);
+    rewards.insert(VALIDATOR_1.clone(), vec![expected_total_reward_integer]);
 
     let distribute_request = ExecuteRequestBuilder::contract_call_by_hash(
         *SYSTEM_ADDR,
@@ -2987,7 +2992,7 @@ fn should_distribute_delegation_rate_full_after_upgrading() {
 
     builder.upgrade(&mut upgrade_request);
 
-    let initial_supply = builder.total_supply(None, protocol_version);
+    let initial_supply = builder.total_supply(protocol_version, None);
 
     for _ in 0..5 {
         builder.advance_era();
@@ -3004,7 +3009,7 @@ fn should_distribute_delegation_rate_full_after_upgrading() {
     let mut rewards = BTreeMap::new();
     rewards.insert(
         VALIDATOR_1.clone(),
-        expected_total_reward_after.to_integer(),
+        vec![expected_total_reward_after.to_integer()],
     );
     assert!(
         builder
@@ -3164,7 +3169,10 @@ fn should_not_restake_after_full_unbond() {
         U512::from(DELEGATOR_1_STAKE),
     );
     let delegator = get_delegator_bid(&mut builder, VALIDATOR_1.clone(), DELEGATOR_1.clone());
-    assert!(delegator.is_none());
+    assert!(delegator
+        .expect("should still have zero bid")
+        .staked_amount()
+        .is_zero());
 
     let withdraws = builder.get_unbonds();
     let unbonding_purses = withdraws
@@ -3188,10 +3196,13 @@ fn should_not_restake_after_full_unbond() {
 
     builder.advance_era();
 
-    // Delegator should not remain delegated even though they were eligible for rewards in the
+    // Delegator's stake should remain at zero even though they were eligible for rewards in the
     // second era.
     let delegator = get_delegator_bid(&mut builder, VALIDATOR_1.clone(), DELEGATOR_1.clone());
-    assert!(delegator.is_none());
+    assert!(delegator
+        .expect("should have zero bid")
+        .staked_amount()
+        .is_zero());
 }
 
 // In this test, we set up a delegator and a validator, the delegator delegates to the validator.
@@ -3314,7 +3325,10 @@ fn delegator_full_unbond_during_first_reward_era() {
         U512::from(DELEGATOR_1_STAKE),
     );
     let delegator = get_delegator_bid(&mut builder, VALIDATOR_1.clone(), DELEGATOR_1.clone());
-    assert!(delegator.is_none());
+    assert!(delegator
+        .expect("should still have zero bid")
+        .staked_amount()
+        .is_zero());
 
     let withdraws = builder.get_unbonds();
     let unbonding_purses = withdraws
@@ -3334,8 +3348,11 @@ fn delegator_full_unbond_during_first_reward_era() {
     // validator receives rewards after this step.
     builder.advance_era();
 
-    // Delegator should not remain delegated even though they were eligible for rewards in the
-    // second era.
+    // Delegator's stake should remain at zero delegated even though they were eligible for rewards
+    // in the second era.
     let delegator = get_delegator_bid(&mut builder, VALIDATOR_1.clone(), DELEGATOR_1.clone());
-    assert!(delegator.is_none());
+    assert!(delegator
+        .expect("should still have zero bid")
+        .staked_amount()
+        .is_zero());
 }

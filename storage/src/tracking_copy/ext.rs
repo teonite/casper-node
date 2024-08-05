@@ -1,17 +1,22 @@
 use std::{
-    collections::{btree_map::Entry, BTreeMap, BTreeSet},
+    collections::{btree_map::Entry, BTreeMap},
     convert::TryInto,
 };
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::{
-    data_access_layer::balance::{BalanceHolds, BalanceHoldsWithProof},
+    data_access_layer::balance::{
+        AvailableBalanceChecker, BalanceHolds, BalanceHoldsWithProof, ProcessingHoldBalanceHandling,
+    },
     global_state::{error::Error as GlobalStateError, state::StateReader},
     tracking_copy::{TrackingCopy, TrackingCopyError},
+    KeyPrefix,
 };
 use casper_types::{
     account::AccountHash,
     addressable_entity::NamedKeys,
+    bytesrepr::ToBytes,
+    contracts::ContractHash,
     global_state::TrieMerkleProof,
     system::{
         mint::{
@@ -20,9 +25,10 @@ use casper_types::{
         },
         MINT,
     },
-    BlockTime, ByteCode, ByteCodeAddr, ByteCodeHash, CLValue, ChecksumRegistry, EntityAddr,
-    HoldBalanceHandling, HoldsEpoch, Key, KeyTag, Motes, Package, PackageHash, StoredValue,
-    StoredValueTypeMismatch, SystemEntityRegistry, URef, URefAddr, U512,
+    BlockGlobalAddr, BlockTime, ByteCode, ByteCodeAddr, ByteCodeHash, CLValue, ChecksumRegistry,
+    Contract, EntityAddr, EntryPointValue, EntryPoints, HoldBalanceHandling, HoldsEpoch, Key,
+    Motes, Package, PackageHash, StoredValue, StoredValueTypeMismatch, SystemEntityRegistry, URef,
+    URefAddr, U512,
 };
 
 /// Higher-level operations on the state via a `TrackingCopy`.
@@ -33,11 +39,14 @@ pub trait TrackingCopyExt<R> {
     /// Reads the entity key for a given account hash.
     fn read_account_key(&mut self, account_hash: AccountHash) -> Result<Key, Self::Error>;
 
+    /// Returns block time associated with checked out root hash.
+    fn get_block_time(&self) -> Result<Option<BlockTime>, Self::Error>;
+
     /// Returns balance hold configuration settings for imputed kind of balance hold.
     fn get_balance_hold_config(
-        &mut self,
+        &self,
         hold_kind: BalanceHoldAddrTag,
-    ) -> Result<(HoldBalanceHandling, u64), Self::Error>;
+    ) -> Result<Option<(BlockTime, HoldBalanceHandling, u64)>, Self::Error>;
 
     /// Gets the purse balance key for a given purse.
     fn get_purse_balance_key(&self, purse_key: Key) -> Result<Key, Self::Error>;
@@ -52,12 +61,7 @@ pub trait TrackingCopyExt<R> {
     fn get_total_balance(&self, key: Key) -> Result<Motes, Self::Error>;
 
     /// Returns the available balance, considering any holds from holds_epoch to now.
-    /// If holds_epoch is none, available balance == total balance.
-    fn get_available_balance(
-        &self,
-        balance_key: Key,
-        holds_epoch: HoldsEpoch,
-    ) -> Result<Motes, Self::Error>;
+    fn get_available_balance(&mut self, balance_key: Key) -> Result<Motes, Self::Error>;
 
     /// Gets the purse balance key for a given purse and provides a Merkle proof.
     fn get_purse_balance_key_with_proof(
@@ -80,26 +84,33 @@ pub trait TrackingCopyExt<R> {
 
     /// Gets the balance holds for a given balance, without Merkle proofs.
     fn get_balance_holds(
-        &self,
+        &mut self,
         purse_addr: URefAddr,
-        holds_epoch: HoldsEpoch,
+        block_time: BlockTime,
+        interval: u64,
     ) -> Result<BTreeMap<BlockTime, BalanceHolds>, Self::Error>;
 
     /// Gets the balance holds for a given balance, with Merkle proofs.
     fn get_balance_holds_with_proof(
         &self,
         purse_addr: URefAddr,
-        holds_epoch: HoldsEpoch,
     ) -> Result<BTreeMap<BlockTime, BalanceHoldsWithProof>, Self::Error>;
 
     /// Returns the collection of named keys for a given AddressableEntity.
-    fn get_named_keys(&mut self, entity_addr: EntityAddr) -> Result<NamedKeys, Self::Error>;
+    fn get_named_keys(&self, entity_addr: EntityAddr) -> Result<NamedKeys, Self::Error>;
+
+    /// Returns the collection of entry points for a given AddresableEntity.
+    fn get_v1_entry_points(&mut self, entity_addr: EntityAddr) -> Result<EntryPoints, Self::Error>;
 
     /// Gets a package by hash.
     fn get_package(&mut self, package_hash: PackageHash) -> Result<Package, Self::Error>;
+    fn get_legacy_contract(
+        &mut self,
+        legacy_contract: ContractHash,
+    ) -> Result<Contract, Self::Error>;
 
     /// Gets the system entity registry.
-    fn get_system_entity_registry(&mut self) -> Result<SystemEntityRegistry, Self::Error>;
+    fn get_system_entity_registry(&self) -> Result<SystemEntityRegistry, Self::Error>;
 
     /// Gets the system checksum registry.
     fn get_checksum_registry(&mut self) -> Result<Option<ChecksumRegistry>, Self::Error>;
@@ -125,12 +136,32 @@ where
         }
     }
 
+    fn get_block_time(&self) -> Result<Option<BlockTime>, Self::Error> {
+        match self.read(&Key::BlockGlobal(BlockGlobalAddr::BlockTime))? {
+            None => Ok(None),
+            Some(StoredValue::CLValue(cl_value)) => {
+                let block_time = cl_value.into_t().map_err(Self::Error::CLValue)?;
+                Ok(Some(BlockTime::new(block_time)))
+            }
+            Some(unexpected) => {
+                warn!(?unexpected, "block time stored as unexpected value type");
+                Err(Self::Error::UnexpectedStoredValueVariant)
+            }
+        }
+    }
+
     fn get_balance_hold_config(
-        &mut self,
+        &self,
         hold_kind: BalanceHoldAddrTag,
-    ) -> Result<(HoldBalanceHandling, u64), Self::Error> {
+    ) -> Result<Option<(BlockTime, HoldBalanceHandling, u64)>, Self::Error> {
+        let block_time = match self.get_block_time()? {
+            None => return Ok(None),
+            Some(block_time) => block_time,
+        };
         let (handling_key, interval_key) = match hold_kind {
-            BalanceHoldAddrTag::Processing => return Ok((HoldBalanceHandling::Accrued, 0)),
+            BalanceHoldAddrTag::Processing => {
+                return Ok(Some((block_time, HoldBalanceHandling::Accrued, 0)));
+            }
             BalanceHoldAddrTag::Gas => (MINT_GAS_HOLD_HANDLING_KEY, MINT_GAS_HOLD_INTERVAL_KEY),
         };
 
@@ -155,7 +186,7 @@ where
                 .as_uref()
                 .ok_or(TrackingCopyError::UnexpectedKeyVariant(*named_key))?;
 
-            match self.read(named_key) {
+            match self.read(&named_key.normalize()) {
                 Ok(Some(StoredValue::CLValue(cl_value))) => {
                     let handling_tag = cl_value.into_t().map_err(TrackingCopyError::CLValue)?;
                     HoldBalanceHandling::from_tag(handling_tag).map_err(|_| {
@@ -164,8 +195,21 @@ where
                         )
                     })?
                 }
-                Ok(_) => return Err(TrackingCopyError::UnexpectedStoredValueVariant),
-                Err(tce) => return Err(tce),
+                Ok(Some(unexpected)) => {
+                    warn!(
+                        ?unexpected,
+                        "hold balance handling unexpected stored value variant"
+                    );
+                    return Err(TrackingCopyError::UnexpectedStoredValueVariant);
+                }
+                Ok(None) => {
+                    error!("hold balance handling missing from gs");
+                    return Err(TrackingCopyError::ValueNotFound(handling_key.to_string()));
+                }
+                Err(gse) => {
+                    error!(?gse, "hold balance handling read error");
+                    return Err(TrackingCopyError::Storage(gse));
+                }
             }
         };
 
@@ -181,16 +225,26 @@ where
                 .as_uref()
                 .ok_or(TrackingCopyError::UnexpectedKeyVariant(*named_key))?;
 
-            match self.read(named_key) {
+            match self.read(&named_key.normalize()) {
                 Ok(Some(StoredValue::CLValue(cl_value))) => {
                     cl_value.into_t().map_err(TrackingCopyError::CLValue)?
                 }
-                Ok(_) => return Err(TrackingCopyError::UnexpectedStoredValueVariant),
-                Err(tce) => return Err(tce),
+                Ok(Some(unexpected)) => {
+                    warn!(
+                        ?unexpected,
+                        "hold balance interval unexpected stored value variant"
+                    );
+                    return Err(TrackingCopyError::UnexpectedStoredValueVariant);
+                }
+                Ok(None) => {
+                    error!("hold balance interval missing from gs");
+                    return Err(TrackingCopyError::ValueNotFound(handling_key.to_string()));
+                }
+                Err(gse) => return Err(TrackingCopyError::Storage(gse)),
             }
         };
 
-        Ok((handling, interval))
+        Ok(Some((block_time, handling, interval)))
     }
 
     fn get_purse_balance_key(&self, purse_key: Key) -> Result<Key, Self::Error> {
@@ -200,71 +254,30 @@ where
         Ok(Key::Balance(balance_key.addr()))
     }
 
-    fn get_purse_balance_key_with_proof(
+    fn get_balance_hold_addresses(
         &self,
-        purse_key: Key,
-    ) -> Result<(Key, TrieMerkleProof<Key, StoredValue>), Self::Error> {
-        let balance_key: Key = purse_key
-            .uref_to_hash()
-            .ok_or(TrackingCopyError::UnexpectedKeyVariant(purse_key))?;
-        let proof: TrieMerkleProof<Key, StoredValue> = self
-            .read_with_proof(&balance_key)?
-            .ok_or(TrackingCopyError::KeyNotFound(purse_key))?;
-        let stored_value_ref: &StoredValue = proof.value();
-        let cl_value: CLValue = stored_value_ref
-            .to_owned()
-            .try_into()
-            .map_err(TrackingCopyError::TypeMismatch)?;
-        let balance_key: Key = cl_value.into_t()?;
-        Ok((balance_key, proof))
-    }
-
-    fn get_available_balance(
-        &self,
-        key: Key,
-        holds_epoch: HoldsEpoch,
-    ) -> Result<Motes, Self::Error> {
-        let key = {
-            if let Key::URef(uref) = key {
-                Key::Balance(uref.addr())
-            } else {
-                key
+        purse_addr: URefAddr,
+    ) -> Result<Vec<BalanceHoldAddr>, Self::Error> {
+        let tagged_keys = {
+            let mut ret: Vec<BalanceHoldAddr> = vec![];
+            let gas_prefix = KeyPrefix::GasBalanceHoldsByPurse(purse_addr).to_bytes()?;
+            for key in self.keys_with_prefix(&gas_prefix)? {
+                let addr = key
+                    .as_balance_hold()
+                    .ok_or(Self::Error::UnexpectedKeyVariant(key))?;
+                ret.push(*addr);
             }
+            let processing_prefix =
+                KeyPrefix::ProcessingBalanceHoldsByPurse(purse_addr).to_bytes()?;
+            for key in self.keys_with_prefix(&processing_prefix)? {
+                let addr = key
+                    .as_balance_hold()
+                    .ok_or(Self::Error::UnexpectedKeyVariant(key))?;
+                ret.push(*addr);
+            }
+            ret
         };
-
-        if let Key::Balance(purse_addr) = key {
-            let total_balance = self.get_total_balance(key)?;
-            match holds_epoch.value() {
-                None => Ok(total_balance),
-                Some(epoch) => {
-                    let holds = self.get_balance_hold_addresses(purse_addr)?;
-                    let mut total_holds = U512::zero();
-                    for balance_hold_addr in holds {
-                        let block_time = balance_hold_addr.block_time();
-                        if block_time.value() < epoch {
-                            // skip holds older than imputed epoch
-                            //  don't skip holds with a timestamp >= epoch timestamp
-                            continue;
-                        }
-                        let stored_value: StoredValue = self
-                            .read(&balance_hold_addr.into())?
-                            .ok_or(TrackingCopyError::KeyNotFound(key))?;
-                        let cl_value: CLValue = stored_value
-                            .try_into()
-                            .map_err(TrackingCopyError::TypeMismatch)?;
-                        let hold_amount = cl_value.into_t()?;
-                        total_holds = total_holds.checked_add(hold_amount).unwrap_or(U512::zero());
-                    }
-                    let available = total_balance
-                        .value()
-                        .checked_sub(total_holds)
-                        .unwrap_or(U512::zero());
-                    Ok(Motes::new(available))
-                }
-            }
-        } else {
-            Err(Self::Error::UnexpectedKeyVariant(key))
-        }
+        Ok(tagged_keys)
     }
 
     fn get_total_balance(&self, key: Key) -> Result<Motes, Self::Error> {
@@ -287,6 +300,61 @@ where
         } else {
             Err(Self::Error::UnexpectedKeyVariant(key))
         }
+    }
+
+    fn get_available_balance(&mut self, key: Key) -> Result<Motes, Self::Error> {
+        let purse_addr = {
+            if let Key::URef(uref) = key {
+                uref.addr()
+            } else if let Key::Balance(uref_addr) = key {
+                uref_addr
+            } else {
+                return Err(Self::Error::UnexpectedKeyVariant(key));
+            }
+        };
+
+        let total_balance = self.get_total_balance(Key::Balance(purse_addr))?.value();
+        let (block_time, handling, interval) =
+            match self.get_balance_hold_config(BalanceHoldAddrTag::Gas)? {
+                None => {
+                    // if there is no hold config at this root hash, holds are not a thing
+                    // and available balance = total balance
+                    return Ok(Motes::new(total_balance));
+                }
+                Some((block_time, handling, interval)) => (block_time, handling, interval),
+            };
+
+        let balance_holds = self.get_balance_holds(purse_addr, block_time, interval)?;
+        let gas_handling = (handling, interval).into();
+        let processing_handling = ProcessingHoldBalanceHandling::new();
+        match balance_holds.available_balance(
+            block_time,
+            total_balance,
+            gas_handling,
+            processing_handling,
+        ) {
+            Ok(balance) => Ok(Motes::new(balance)),
+            Err(balance_error) => Err(Self::Error::Balance(balance_error)),
+        }
+    }
+
+    fn get_purse_balance_key_with_proof(
+        &self,
+        purse_key: Key,
+    ) -> Result<(Key, TrieMerkleProof<Key, StoredValue>), Self::Error> {
+        let balance_key: Key = purse_key
+            .uref_to_hash()
+            .ok_or(TrackingCopyError::UnexpectedKeyVariant(purse_key))?;
+        let proof: TrieMerkleProof<Key, StoredValue> = self
+            .read_with_proof(&balance_key)?
+            .ok_or(TrackingCopyError::KeyNotFound(purse_key))?;
+        let stored_value_ref: &StoredValue = proof.value();
+        let cl_value: CLValue = stored_value_ref
+            .to_owned()
+            .try_into()
+            .map_err(TrackingCopyError::TypeMismatch)?;
+        let balance_key: Key = cl_value.into_t()?;
+        Ok((balance_key, proof))
     }
 
     fn get_total_balance_with_proof(
@@ -316,40 +384,62 @@ where
         }
     }
 
-    fn get_balance_hold_addresses(
-        &self,
+    fn clear_expired_balance_holds(
+        &mut self,
         purse_addr: URefAddr,
-    ) -> Result<Vec<BalanceHoldAddr>, Self::Error> {
-        let tagged_keys = {
-            let mut ret: Vec<BalanceHoldAddr> = vec![];
-            let tag = BalanceHoldAddrTag::Gas;
-            let gas_prefix = tag.purse_prefix_by_tag(purse_addr)?;
-            for key in self.keys_with_prefix(&gas_prefix)? {
-                let addr = key
+        filter: Vec<(BalanceHoldAddrTag, HoldsEpoch)>,
+    ) -> Result<(), Self::Error> {
+        for (tag, holds_epoch) in filter {
+            let prefix = match tag {
+                BalanceHoldAddrTag::Gas => KeyPrefix::GasBalanceHoldsByPurse(purse_addr),
+                BalanceHoldAddrTag::Processing => {
+                    KeyPrefix::ProcessingBalanceHoldsByPurse(purse_addr)
+                }
+            };
+            let immut: &_ = self;
+            let hold_keys = immut.keys_with_prefix(&prefix.to_bytes()?)?;
+            for hold_key in hold_keys {
+                let balance_hold_addr = hold_key
                     .as_balance_hold()
-                    .ok_or(Self::Error::UnexpectedKeyVariant(key))?;
-                ret.push(*addr);
+                    .ok_or(Self::Error::UnexpectedKeyVariant(hold_key))?;
+                let hold_block_time = balance_hold_addr.block_time();
+                if let Some(earliest_relevant_timestamp) = holds_epoch.value() {
+                    if hold_block_time.value() > earliest_relevant_timestamp {
+                        // skip still relevant holds
+                        //  the expectation is that holds are cleared after balance checks,
+                        //  and before payment settlement; if that ordering changes in the
+                        //  future this strategy should be reevaluated to determine if it
+                        //  remains correct.
+                        continue;
+                    }
+                }
+                // prune away holds with a timestamp newer than epoch timestamp
+                //  including holds with a timestamp == epoch timestamp
+                self.prune(hold_key)
             }
-            let tag = BalanceHoldAddrTag::Processing;
-            let processing_prefix = tag.purse_prefix_by_tag(purse_addr)?;
-            for key in self.keys_with_prefix(&processing_prefix)? {
-                let addr = key
-                    .as_balance_hold()
-                    .ok_or(Self::Error::UnexpectedKeyVariant(key))?;
-                ret.push(*addr);
-            }
-            ret
-        };
-        Ok(tagged_keys)
+        }
+        Ok(())
     }
 
     fn get_balance_holds(
-        &self,
+        &mut self,
         purse_addr: URefAddr,
-        holds_epoch: HoldsEpoch,
+        block_time: BlockTime,
+        interval: u64,
     ) -> Result<BTreeMap<BlockTime, BalanceHolds>, Self::Error> {
-        let holds = self.get_balance_hold_addresses(purse_addr)?;
+        // NOTE: currently there are two kinds of holds, gas and processing.
+        // Processing holds only effect one block to prevent double spend and are always
+        // cleared at the end of processing each transaction. Gas holds persist for some
+        // interval, over many blocks and eras. Thus, using the holds_epoch for gas holds
+        // during transaction execution also picks up processing holds and call sites of
+        // this method currently pass the holds epoch for gas holds. This works fine for
+        // now, but if one or more other kinds of holds with differing periods are added
+        // in the future, this logic will need to be tweaked to take get the holds epoch
+        // for each hold kind and process each kind discretely in order and collate the
+        // non-expired hold total at the end.
         let mut ret: BTreeMap<BlockTime, BalanceHolds> = BTreeMap::new();
+        let holds_epoch = { HoldsEpoch::from_millis(block_time.value(), interval) };
+        let holds = self.get_balance_hold_addresses(purse_addr)?;
         for balance_hold_addr in holds {
             let block_time = balance_hold_addr.block_time();
             if let Some(timestamp) = holds_epoch.value() {
@@ -367,7 +457,7 @@ where
                 },
                 Ok(Some(_)) => return Err(Self::Error::UnexpectedStoredValueVariant),
                 Ok(None) => return Err(Self::Error::KeyNotFound(hold_key)),
-                Err(gse) => return Err(Self::Error::Storage(gse)),
+                Err(tce) => return Err(tce),
             };
             match ret.entry(block_time) {
                 Entry::Vacant(entry) => {
@@ -396,10 +486,27 @@ where
     fn get_balance_holds_with_proof(
         &self,
         purse_addr: URefAddr,
-        holds_epoch: HoldsEpoch,
     ) -> Result<BTreeMap<BlockTime, BalanceHoldsWithProof>, Self::Error> {
-        let holds = self.get_balance_hold_addresses(purse_addr)?;
+        // NOTE: currently there are two kinds of holds, gas and processing.
+        // Processing holds only effect one block to prevent double spend and are always
+        // cleared at the end of processing each transaction. Gas holds persist for some
+        // interval, over many blocks and eras. Thus, using the holds_epoch for gas holds
+        // during transaction execution also picks up processing holds and call sites of
+        // this method currently pass the holds epoch for gas holds. This works fine for
+        // now, but if one or more other kinds of holds with differing periods are added
+        // in the future, this logic will need to be tweaked to take get the holds epoch
+        // for each hold kind and process each kind discretely in order and collate the
+        // non-expired hold total at the end.
         let mut ret: BTreeMap<BlockTime, BalanceHoldsWithProof> = BTreeMap::new();
+        let (block_time, interval) = match self.get_balance_hold_config(BalanceHoldAddrTag::Gas)? {
+            Some((block_time, _, interval)) => (block_time.value(), interval),
+            None => {
+                // if there is no holds config at this root hash, there can't be any holds
+                return Ok(ret);
+            }
+        };
+        let holds_epoch = { HoldsEpoch::from_millis(block_time, interval) };
+        let holds = self.get_balance_hold_addresses(purse_addr)?;
         for balance_hold_addr in holds {
             let block_time = balance_hold_addr.block_time();
             if let Some(timestamp) = holds_epoch.value() {
@@ -443,82 +550,12 @@ where
         Ok(ret)
     }
 
-    fn clear_expired_balance_holds(
-        &mut self,
-        purse_addr: URefAddr,
-        filter: Vec<(BalanceHoldAddrTag, HoldsEpoch)>,
-    ) -> Result<(), Self::Error> {
-        for (tag, holds_epoch) in filter {
-            let prefix = tag.purse_prefix_by_tag(purse_addr)?;
-            let immut: &_ = self;
-            let hold_keys = immut.keys_with_prefix(&prefix)?;
-            for hold_key in hold_keys {
-                let balance_hold_addr = hold_key
-                    .as_balance_hold()
-                    .ok_or(Self::Error::UnexpectedKeyVariant(hold_key))?;
-                let hold_block_time = balance_hold_addr.block_time();
-                if let Some(earliest_relevant_timestamp) = holds_epoch.value() {
-                    if hold_block_time.value() > earliest_relevant_timestamp {
-                        // skip still relevant holds
-                        //  the expectation is that holds are cleared after balance checks,
-                        //  and before payment settlement; if that ordering changes in the
-                        //  future this strategy should be reevaluated to determine if it
-                        //  remains correct.
-                        continue;
-                    }
-                }
-                // prune away holds with a timestamp newer than epoch timestamp
-                //  including holds with a timestamp == epoch timestamp
-                self.prune(hold_key)
-            }
-        }
-        Ok(())
-    }
-
-    fn get_byte_code(&mut self, byte_code_hash: ByteCodeHash) -> Result<ByteCode, Self::Error> {
-        let key = Key::ByteCode(ByteCodeAddr::V1CasperWasm(byte_code_hash.value()));
-        match self.get(&key)? {
-            Some(StoredValue::ByteCode(byte_code)) => Ok(byte_code),
-            Some(other) => Err(TrackingCopyError::TypeMismatch(
-                StoredValueTypeMismatch::new("ContractWasm".to_string(), other.type_name()),
-            )),
-            None => Err(TrackingCopyError::KeyNotFound(key)),
-        }
-    }
-
-    fn get_named_keys(&mut self, entity_addr: EntityAddr) -> Result<NamedKeys, Self::Error> {
-        let prefix = entity_addr
-            .named_keys_prefix()
-            .map_err(Self::Error::BytesRepr)?;
-
-        let mut ret: BTreeSet<Key> = BTreeSet::new();
-        let keys = self.reader.keys_with_prefix(&prefix)?;
-        let pruned = &self.cache.prunes_cached;
-        // don't include keys marked for pruning
-        for key in keys {
-            if pruned.contains(&key) {
-                continue;
-            }
-            ret.insert(key);
-        }
-
-        let cache = self.cache.get_key_tag_muts_cached(&KeyTag::NamedKey);
-
-        // there may be newly inserted keys which have not been committed yet
-        if let Some(keys) = cache {
-            for key in keys {
-                if ret.contains(&key) {
-                    continue;
-                }
-                if key.is_entry_for_base(&entity_addr) {
-                    ret.insert(key);
-                }
-            }
-        }
+    fn get_named_keys(&self, entity_addr: EntityAddr) -> Result<NamedKeys, Self::Error> {
+        let keys = self.get_keys_by_prefix(&KeyPrefix::NamedKeysByEntity(entity_addr))?;
 
         let mut named_keys = NamedKeys::new();
 
-        for entry_key in ret.iter() {
+        for entry_key in &keys {
             match self.read(entry_key)? {
                 Some(StoredValue::NamedKey(named_key)) => {
                     let key = named_key.get_key().map_err(TrackingCopyError::CLValue)?;
@@ -528,7 +565,7 @@ where
                 Some(other) => {
                     return Err(TrackingCopyError::TypeMismatch(
                         StoredValueTypeMismatch::new("CLValue".to_string(), other.type_name()),
-                    ))
+                    ));
                 }
                 None => match self.cache.reads_cached.get(entry_key) {
                     Some(StoredValue::NamedKey(named_key_value)) => {
@@ -548,6 +585,46 @@ where
         }
 
         Ok(named_keys)
+    }
+
+    fn get_v1_entry_points(&mut self, entity_addr: EntityAddr) -> Result<EntryPoints, Self::Error> {
+        let keys = self.get_keys_by_prefix(&KeyPrefix::EntryPointsV1ByEntity(entity_addr))?;
+
+        let mut entry_points_v1 = EntryPoints::new();
+
+        for entry_point_key in keys.iter() {
+            match self.read(entry_point_key)? {
+                Some(StoredValue::EntryPoint(EntryPointValue::V1CasperVm(entry_point))) => {
+                    entry_points_v1.add_entry_point(entry_point)
+                }
+                Some(other) => {
+                    return Err(TrackingCopyError::TypeMismatch(
+                        StoredValueTypeMismatch::new(
+                            "EntryPointsV1".to_string(),
+                            other.type_name(),
+                        ),
+                    ));
+                }
+                None => match self.cache.reads_cached.get(entry_point_key) {
+                    Some(StoredValue::EntryPoint(EntryPointValue::V1CasperVm(entry_point))) => {
+                        entry_points_v1.add_entry_point(entry_point.to_owned())
+                    }
+                    Some(other) => {
+                        return Err(TrackingCopyError::TypeMismatch(
+                            StoredValueTypeMismatch::new(
+                                "EntryPointsV1".to_string(),
+                                other.type_name(),
+                            ),
+                        ));
+                    }
+                    None => {
+                        return Err(TrackingCopyError::KeyNotFound(*entry_point_key));
+                    }
+                },
+            }
+        }
+
+        Ok(entry_points_v1)
     }
 
     fn get_package(&mut self, package_hash: PackageHash) -> Result<Package, Self::Error> {
@@ -570,13 +647,28 @@ where
                 Some(other) => Err(TrackingCopyError::TypeMismatch(
                     StoredValueTypeMismatch::new("ContractPackage".to_string(), other.type_name()),
                 )),
-                None => Err(Self::Error::KeyNotFound(key)),
+                None => Err(Self::Error::ValueNotFound(key.to_formatted_string())),
             },
         }
     }
 
-    fn get_system_entity_registry(&mut self) -> Result<SystemEntityRegistry, Self::Error> {
-        match self.get(&Key::SystemEntityRegistry)? {
+    fn get_legacy_contract(
+        &mut self,
+        legacy_contract: ContractHash,
+    ) -> Result<Contract, Self::Error> {
+        let key = Key::Hash(legacy_contract.value());
+        match self.read(&key)? {
+            Some(StoredValue::Contract(legacy_contract)) => Ok(legacy_contract),
+            Some(other) => Err(Self::Error::TypeMismatch(StoredValueTypeMismatch::new(
+                "Contract".to_string(),
+                other.type_name(),
+            ))),
+            None => Err(Self::Error::ValueNotFound(key.to_formatted_string())),
+        }
+    }
+
+    fn get_system_entity_registry(&self) -> Result<SystemEntityRegistry, Self::Error> {
+        match self.read(&Key::SystemEntityRegistry)? {
             Some(StoredValue::CLValue(registry)) => {
                 let registry: SystemEntityRegistry =
                     CLValue::into_t(registry).map_err(Self::Error::from)?;
@@ -600,6 +692,17 @@ where
                 StoredValueTypeMismatch::new("CLValue".to_string(), other.type_name()),
             )),
             None => Ok(None),
+        }
+    }
+
+    fn get_byte_code(&mut self, byte_code_hash: ByteCodeHash) -> Result<ByteCode, Self::Error> {
+        let key = Key::ByteCode(ByteCodeAddr::V1CasperWasm(byte_code_hash.value()));
+        match self.get(&key)? {
+            Some(StoredValue::ByteCode(byte_code)) => Ok(byte_code),
+            Some(other) => Err(TrackingCopyError::TypeMismatch(
+                StoredValueTypeMismatch::new("ContractWasm".to_string(), other.type_name()),
+            )),
+            None => Err(TrackingCopyError::KeyNotFound(key)),
         }
     }
 }

@@ -33,7 +33,7 @@ pub struct EraId(u64);
 
 impl EraId {
     /// Maximum possible value an [`EraId`] can hold.
-    pub const MAX: EraId = EraId(u64::max_value());
+    pub const MAX: EraId = EraId(u64::MAX);
 
     /// Creates new [`EraId`] instance.
     pub const fn new(value: u64) -> EraId {
@@ -51,6 +51,15 @@ impl EraId {
     pub fn iter_inclusive(&self, num_eras: u64) -> impl Iterator<Item = EraId> {
         let current_era_id = self.0;
         (current_era_id..=current_era_id + num_eras).map(EraId)
+    }
+
+    /// Returns an iterator over a range of era IDs, starting from `start` and ending at `end`,
+    /// inclusive.
+    pub fn iter_range_inclusive(
+        start: EraId,
+        end: EraId,
+    ) -> impl DoubleEndedIterator<Item = EraId> {
+        (start.0..=end.0).map(EraId)
     }
 
     /// Increments the era.
@@ -139,7 +148,7 @@ impl FromStr for EraId {
 impl Add<u64> for EraId {
     type Output = EraId;
 
-    #[allow(clippy::integer_arithmetic)] // The caller must make sure this doesn't overflow.
+    #[allow(clippy::arithmetic_side_effects)] // The caller must make sure this doesn't overflow.
     fn add(self, x: u64) -> EraId {
         EraId::from(self.0 + x)
     }
@@ -154,7 +163,7 @@ impl AddAssign<u64> for EraId {
 impl Sub<u64> for EraId {
     type Output = EraId;
 
-    #[allow(clippy::integer_arithmetic)] // The caller must make sure this doesn't overflow.
+    #[allow(clippy::arithmetic_side_effects)] // The caller must make sure this doesn't overflow.
     fn sub(self, x: u64) -> EraId {
         EraId::from(self.0 - x)
     }
@@ -223,9 +232,9 @@ mod tests {
 
         let window: Vec<EraId> = current_era.iter_inclusive(auction_delay).collect();
         assert_eq!(window.len(), auction_delay as usize + 1);
-        assert_eq!(window.get(0), Some(&current_era));
+        assert_eq!(window.first(), Some(&current_era));
         assert_eq!(
-            window.iter().rev().next(),
+            window.iter().next_back(),
             Some(&(current_era + auction_delay))
         );
     }

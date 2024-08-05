@@ -72,19 +72,14 @@ impl LoggingConfig {
 /// Logging output format.
 ///
 /// Defaults to "text"".
-#[derive(Clone, DataSize, Debug, Deserialize, Serialize)]
+#[derive(Clone, DataSize, Debug, Deserialize, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum LoggingFormat {
     /// Text format.
+    #[default]
     Text,
     /// JSON format.
     Json,
-}
-
-impl Default for LoggingFormat {
-    fn default() -> Self {
-        LoggingFormat::Text
-    }
 }
 
 /// This is used to implement tracing's `FormatEvent` so that we can customize the way tracing
@@ -316,12 +311,12 @@ pub fn display_global_env_filter() -> anyhow::Result<String> {
 }
 
 /// Type alias for the formatting function used.
-pub type FormatDebugFn = fn(&mut Writer, &Field, &dyn std::fmt::Debug) -> fmt::Result;
+pub type FormatDebugFn = fn(&mut Writer, &Field, &dyn fmt::Debug) -> fmt::Result;
 
 fn format_into_debug_writer(
     writer: &mut Writer,
     field: &Field,
-    value: &dyn std::fmt::Debug,
+    value: &dyn fmt::Debug,
 ) -> fmt::Result {
     match field.name() {
         LOG_FIELD_MESSAGE => write!(writer, "{:?}", value),
@@ -351,7 +346,7 @@ pub fn init_with_config(config: &LoggingConfig) -> anyhow::Result<()> {
         // Setup a new tracing-subscriber writing to `stdout` for logging.
         LoggingFormat::Text => {
             let builder = tracing_subscriber::fmt()
-                .with_writer(io::stdout as fn() -> std::io::Stdout)
+                .with_writer(io::stdout as fn() -> io::Stdout)
                 .with_env_filter(filter)
                 .fmt_fields(formatter)
                 .event_format(FmtEvent::new(config.color, config.abbreviate_modules))
@@ -365,7 +360,7 @@ pub fn init_with_config(config: &LoggingConfig) -> anyhow::Result<()> {
         // JSON logging writes to `stdout` as well but uses the JSON format.
         LoggingFormat::Json => {
             let builder = tracing_subscriber::fmt()
-                .with_writer(io::stdout as fn() -> std::io::Stdout)
+                .with_writer(io::stdout as fn() -> io::Stdout)
                 .with_env_filter(filter)
                 .json()
                 .with_filter_reloading();

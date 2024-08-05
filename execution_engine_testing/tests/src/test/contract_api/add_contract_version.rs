@@ -4,11 +4,10 @@ use casper_engine_test_support::{
 };
 use casper_execution_engine::{engine_state::Error as StateError, execution::ExecError};
 use casper_types::{
-    ApiError, BlockTime, RuntimeArgs, Transaction, TransactionSessionKind, TransactionV1Builder,
+    ApiError, BlockTime, RuntimeArgs, Transaction, TransactionCategory, TransactionV1Builder,
 };
 
 const CONTRACT: &str = "do_nothing_stored.wasm";
-const ENTRY_POINT: &str = "call";
 const CHAIN_NAME: &str = "a";
 const BLOCK_TIME: BlockTime = BlockTime::new(10);
 
@@ -25,14 +24,14 @@ fn should_allow_add_contract_version_via_deploy() {
     builder.exec(deploy_request).expect_success().commit();
 }
 
-fn try_add_contract_version(kind: TransactionSessionKind, should_succeed: bool) {
+fn try_add_contract_version(kind: TransactionCategory, should_succeed: bool) {
     let mut builder = LmdbWasmTestBuilder::default();
     builder.run_genesis(LOCAL_GENESIS_REQUEST.clone()).commit();
 
     let module_bytes = utils::read_wasm_file(CONTRACT);
 
     let txn = Transaction::from(
-        TransactionV1Builder::new_session(kind, module_bytes, ENTRY_POINT)
+        TransactionV1Builder::new_session(kind, module_bytes)
             .with_secret_key(&DEFAULT_ACCOUNT_SECRET_KEY)
             .with_chain_name(CHAIN_NAME)
             .build()
@@ -56,24 +55,12 @@ fn try_add_contract_version(kind: TransactionSessionKind, should_succeed: bool) 
 
 #[ignore]
 #[test]
-fn should_allow_add_contract_version_via_transaction_v1_installer() {
-    try_add_contract_version(TransactionSessionKind::Installer, true)
-}
-
-#[ignore]
-#[test]
-fn should_allow_add_contract_version_via_transaction_v1_upgrader() {
-    try_add_contract_version(TransactionSessionKind::Upgrader, true)
+fn should_allow_add_contract_version_via_transaction_v1_installer_upgrader() {
+    try_add_contract_version(TransactionCategory::InstallUpgrade, true)
 }
 
 #[ignore]
 #[test]
 fn should_disallow_add_contract_version_via_transaction_v1_standard() {
-    try_add_contract_version(TransactionSessionKind::Standard, false)
-}
-
-#[ignore]
-#[test]
-fn should_disallow_add_contract_version_via_transaction_v1_isolated() {
-    try_add_contract_version(TransactionSessionKind::Isolated, false)
+    try_add_contract_version(TransactionCategory::Large, false)
 }

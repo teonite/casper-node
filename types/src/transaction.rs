@@ -18,7 +18,6 @@ mod transaction_id;
 mod transaction_invocation_target;
 mod transaction_runtime;
 mod transaction_scheduling;
-mod transaction_session_kind;
 mod transaction_target;
 mod transaction_v1;
 mod transfer_target;
@@ -75,7 +74,6 @@ pub use transaction_id::TransactionId;
 pub use transaction_invocation_target::TransactionInvocationTarget;
 pub use transaction_runtime::TransactionRuntime;
 pub use transaction_scheduling::TransactionScheduling;
-pub use transaction_session_kind::TransactionSessionKind;
 pub use transaction_target::TransactionTarget;
 pub use transaction_v1::{
     InvalidTransactionV1, TransactionCategory, TransactionV1, TransactionV1Body,
@@ -373,6 +371,28 @@ impl Transaction {
         }
     }
 
+    /// The transaction category.
+    pub fn transaction_category(&self) -> u8 {
+        match self {
+            Transaction::Deploy(deploy) => {
+                if deploy.is_transfer() {
+                    TransactionCategory::Mint as u8
+                } else {
+                    TransactionCategory::Large as u8
+                }
+            }
+            Transaction::V1(v1) => v1.transaction_category(),
+        }
+    }
+
+    /// Is the transaction the legacy deploy variant.
+    pub fn is_legacy_transaction(&self) -> bool {
+        match self {
+            Transaction::Deploy(_) => true,
+            Transaction::V1(_) => false,
+        }
+    }
+
     // This method is not intended to be used by third party crates.
     #[doc(hidden)]
     #[cfg(feature = "json-schema")]
@@ -387,21 +407,6 @@ impl Transaction {
             Transaction::Deploy(Deploy::random_valid_native_transfer(rng))
         } else {
             Transaction::V1(TransactionV1::random(rng))
-        }
-    }
-}
-
-/// Self discloses category.
-pub trait Categorized {
-    /// What category does this instance belong in.
-    fn category(&self) -> TransactionCategory;
-}
-
-impl Categorized for Transaction {
-    fn category(&self) -> TransactionCategory {
-        match self {
-            Transaction::Deploy(deploy) => deploy.category(),
-            Transaction::V1(v1) => v1.category(),
         }
     }
 }

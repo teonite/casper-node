@@ -85,6 +85,16 @@ pub struct CoreConfig {
     /// `start_protocol_version_with_strict_finality_signatures_required`.
     pub legacy_required_finality: LegacyRequiredFinality,
 
+    /// If true, the protocol upgrade will migrate ALL userland accounts to addressable entity.
+    /// If false, userland accounts will instead be left as is and will be lazily migrated
+    ///    on a per-account basis if / when that account is used during transaction execution.
+    pub migrate_legacy_accounts: bool,
+
+    /// If true, the protocol upgrade will migrate ALL userland contracts to addressable entity.
+    /// If false, userland contracts will instead be left as is and will be lazily migrated
+    ///    on a per-contract basis if / when that contract is used during transaction execution.
+    pub migrate_legacy_contracts: bool,
+
     /// Number of eras before an auction actually defines the set of validators.
     /// If you bond with a sufficient bid in era N, you will be a validator in era N +
     /// auction_delay + 1
@@ -112,6 +122,9 @@ pub struct CoreConfig {
     /// The minimum bound of motes that can be delegated to a validator.
     pub minimum_delegation_amount: u64,
 
+    /// The maximum bound of motes that can be delegated to a validator.
+    pub maximum_delegation_amount: u64,
+
     /// Global state prune batch size (0 means the feature is off in the current protocol version).
     pub prune_batch_size: u64,
 
@@ -135,6 +148,11 @@ pub struct CoreConfig {
     /// The proportion of baseline rewards going to reward finality signatures specifically.
     #[cfg_attr(feature = "datasize", data_size(skip))]
     pub finality_signature_proportion: Ratio<u64>,
+
+    /// The cap for validator credits based upon a proportion of a receiving validator's total
+    /// stake.
+    #[cfg_attr(feature = "datasize", data_size(skip))]
+    pub validator_credit_cap: Ratio<u64>,
 
     /// Lookback interval indicating which past block we are looking at to reward.
     pub signature_rewards_max_delay: u64,
@@ -211,6 +229,8 @@ impl CoreConfig {
         let max_associated_keys = rng.gen();
         let max_runtime_call_stack_height = rng.gen();
         let minimum_delegation_amount = rng.gen::<u32>() as u64;
+        // `maximum_delegation_amount` must be greater than `minimum_delegation_amount`.
+        let maximum_delegation_amount = rng.gen_range(minimum_delegation_amount..u32::MAX as u64);
         let prune_batch_size = rng.gen_range(0..100);
         let strict_argument_checking = rng.gen();
         let simultaneous_peer_requests = rng.gen_range(3..100);
@@ -252,6 +272,11 @@ impl CoreConfig {
 
         let gas_hold_interval = TimeDiff::from_seconds(rng.gen_range(600..604_800));
 
+        let migrate_legacy_accounts = false;
+        let migrate_legacy_contracts = false;
+
+        let validator_credit_cap = Ratio::new(rng.gen_range(1..100), 100);
+
         CoreConfig {
             era_duration,
             minimum_era_height,
@@ -268,6 +293,7 @@ impl CoreConfig {
             max_associated_keys,
             max_runtime_call_stack_height,
             minimum_delegation_amount,
+            maximum_delegation_amount,
             prune_batch_size,
             strict_argument_checking,
             simultaneous_peer_requests,
@@ -286,6 +312,9 @@ impl CoreConfig {
             fee_handling,
             gas_hold_balance_handling,
             gas_hold_interval,
+            migrate_legacy_accounts,
+            migrate_legacy_contracts,
+            validator_credit_cap,
         }
     }
 }
@@ -309,6 +338,7 @@ impl Default for CoreConfig {
             max_associated_keys: DEFAULT_MAX_ASSOCIATED_KEYS,
             max_runtime_call_stack_height: DEFAULT_MAX_RUNTIME_CALL_STACK_HEIGHT,
             minimum_delegation_amount: 500_000_000_000,
+            maximum_delegation_amount: 1_000_000_000_000_000_000,
             prune_batch_size: 0,
             strict_argument_checking: false,
             simultaneous_peer_requests: 5,
@@ -327,6 +357,9 @@ impl Default for CoreConfig {
             allow_reservations: DEFAULT_ALLOW_RESERVATIONS,
             gas_hold_balance_handling: DEFAULT_GAS_HOLD_BALANCE_HANDLING,
             gas_hold_interval: DEFAULT_GAS_HOLD_INTERVAL,
+            migrate_legacy_accounts: false,
+            migrate_legacy_contracts: false,
+            validator_credit_cap: Ratio::new(1, 5),
         }
     }
 }
@@ -352,6 +385,7 @@ impl ToBytes for CoreConfig {
         buffer.extend(self.max_associated_keys.to_bytes()?);
         buffer.extend(self.max_runtime_call_stack_height.to_bytes()?);
         buffer.extend(self.minimum_delegation_amount.to_bytes()?);
+        buffer.extend(self.maximum_delegation_amount.to_bytes()?);
         buffer.extend(self.prune_batch_size.to_bytes()?);
         buffer.extend(self.strict_argument_checking.to_bytes()?);
         buffer.extend(self.simultaneous_peer_requests.to_bytes()?);
@@ -370,6 +404,9 @@ impl ToBytes for CoreConfig {
         buffer.extend(self.allow_reservations.to_bytes()?);
         buffer.extend(self.gas_hold_balance_handling.to_bytes()?);
         buffer.extend(self.gas_hold_interval.to_bytes()?);
+        buffer.extend(self.migrate_legacy_accounts.to_bytes()?);
+        buffer.extend(self.migrate_legacy_contracts.to_bytes()?);
+        buffer.extend(self.validator_credit_cap.to_bytes()?);
         Ok(buffer)
     }
 
@@ -391,6 +428,7 @@ impl ToBytes for CoreConfig {
             + self.max_associated_keys.serialized_length()
             + self.max_runtime_call_stack_height.serialized_length()
             + self.minimum_delegation_amount.serialized_length()
+            + self.maximum_delegation_amount.serialized_length()
             + self.prune_batch_size.serialized_length()
             + self.strict_argument_checking.serialized_length()
             + self.simultaneous_peer_requests.serialized_length()
@@ -409,6 +447,9 @@ impl ToBytes for CoreConfig {
             + self.allow_reservations.serialized_length()
             + self.gas_hold_balance_handling.serialized_length()
             + self.gas_hold_interval.serialized_length()
+            + self.migrate_legacy_accounts.serialized_length()
+            + self.migrate_legacy_contracts.serialized_length()
+            + self.validator_credit_cap.serialized_length()
     }
 }
 
@@ -430,6 +471,7 @@ impl FromBytes for CoreConfig {
         let (max_associated_keys, remainder) = u32::from_bytes(remainder)?;
         let (max_runtime_call_stack_height, remainder) = u32::from_bytes(remainder)?;
         let (minimum_delegation_amount, remainder) = u64::from_bytes(remainder)?;
+        let (maximum_delegation_amount, remainder) = u64::from_bytes(remainder)?;
         let (prune_batch_size, remainder) = u64::from_bytes(remainder)?;
         let (strict_argument_checking, remainder) = bool::from_bytes(remainder)?;
         let (simultaneous_peer_requests, remainder) = u8::from_bytes(remainder)?;
@@ -448,6 +490,9 @@ impl FromBytes for CoreConfig {
         let (allow_reservations, remainder) = FromBytes::from_bytes(remainder)?;
         let (gas_hold_balance_handling, remainder) = FromBytes::from_bytes(remainder)?;
         let (gas_hold_interval, remainder) = TimeDiff::from_bytes(remainder)?;
+        let (migrate_legacy_accounts, remainder) = FromBytes::from_bytes(remainder)?;
+        let (migrate_legacy_contracts, remainder) = FromBytes::from_bytes(remainder)?;
+        let (validator_credit_cap, remainder) = Ratio::from_bytes(remainder)?;
         let config = CoreConfig {
             era_duration,
             minimum_era_height,
@@ -464,6 +509,7 @@ impl FromBytes for CoreConfig {
             max_associated_keys,
             max_runtime_call_stack_height,
             minimum_delegation_amount,
+            maximum_delegation_amount,
             prune_batch_size,
             strict_argument_checking,
             simultaneous_peer_requests,
@@ -482,25 +528,23 @@ impl FromBytes for CoreConfig {
             allow_reservations,
             gas_hold_balance_handling,
             gas_hold_interval,
+            migrate_legacy_accounts,
+            migrate_legacy_contracts,
+            validator_credit_cap,
         };
         Ok((config, remainder))
     }
 }
 
 /// Consensus protocol name.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 #[cfg_attr(feature = "datasize", derive(DataSize))]
 pub enum ConsensusProtocolName {
     /// Highway.
     Highway,
     /// Zug.
+    #[default]
     Zug,
-}
-
-impl Default for ConsensusProtocolName {
-    fn default() -> Self {
-        ConsensusProtocolName::Zug
-    }
 }
 
 impl Serialize for ConsensusProtocolName {
@@ -567,7 +611,7 @@ impl Distribution<ConsensusProtocolName> for Standard {
 }
 
 /// Which finality a legacy block needs during a fast sync.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 #[cfg_attr(feature = "datasize", derive(DataSize))]
 pub enum LegacyRequiredFinality {
     /// Strict finality: more than 2/3rd of validators.
@@ -575,6 +619,7 @@ pub enum LegacyRequiredFinality {
     /// Weak finality: more than 1/3rd of validators.
     Weak,
     /// Finality always valid.
+    #[default]
     Any,
 }
 
@@ -589,12 +634,6 @@ impl Serialize for LegacyRequiredFinality {
             LegacyRequiredFinality::Any => "Any",
         }
         .serialize(serializer)
-    }
-}
-
-impl Default for LegacyRequiredFinality {
-    fn default() -> Self {
-        LegacyRequiredFinality::Any
     }
 }
 

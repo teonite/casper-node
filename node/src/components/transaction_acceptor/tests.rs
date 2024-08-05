@@ -23,7 +23,8 @@ use tokio::time;
 use casper_execution_engine::engine_state::MAX_PAYMENT_AMOUNT;
 use casper_storage::{
     data_access_layer::{
-        AddressableEntityResult, BalanceIdentifier, BalanceResult, ProofsResult, QueryResult,
+        AddressableEntityResult, BalanceIdentifier, BalanceResult, EntryPointsResult, ProofsResult,
+        QueryResult,
     },
     tracking_copy::TrackingCopyError,
 };
@@ -33,10 +34,11 @@ use casper_types::{
     bytesrepr::Bytes,
     global_state::TrieMerkleProof,
     testing::TestRng,
-    Block, BlockV2, CLValue, Chainspec, ChainspecRawBytes, Contract, Deploy, EraId, HashAddr,
-    InvalidDeploy, InvalidTransaction, InvalidTransactionV1, Package, PricingMode, ProtocolVersion,
-    PublicKey, SecretKey, StoredValue, TestBlockBuilder, TimeDiff, Timestamp, Transaction,
-    TransactionConfig, TransactionSessionKind, TransactionV1, TransactionV1Builder, URef, U512,
+    Block, BlockV2, CLValue, Chainspec, ChainspecRawBytes, Contract, Deploy, EntryPointValue,
+    EraId, HashAddr, InvalidDeploy, InvalidTransaction, InvalidTransactionV1, Package, PricingMode,
+    ProtocolVersion, PublicKey, SecretKey, StoredValue, TestBlockBuilder, TimeDiff, Timestamp,
+    Transaction, TransactionCategory, TransactionConfig, TransactionV1, TransactionV1Builder, URef,
+    U512,
 };
 
 use super::*;
@@ -210,6 +212,8 @@ enum TestScenario {
     DeployWithoutTransferAmount,
     BalanceCheckForDeploySentByPeer,
     InvalidPricingModeForTransactionV1,
+    TooLowGasPriceToleranceForTransactionV1,
+    TooLowGasPriceToleranceForDeploy,
 }
 
 impl TestScenario {
@@ -250,7 +254,9 @@ impl TestScenario {
             | TestScenario::FromClientSignedByAdmin(_)
             | TestScenario::DeployWithEmptySessionModuleBytes
             | TestScenario::DeployWithNativeTransferInPayment
-            | TestScenario::InvalidPricingModeForTransactionV1 => Source::Client,
+            | TestScenario::InvalidPricingModeForTransactionV1
+            | TestScenario::TooLowGasPriceToleranceForTransactionV1
+            | TestScenario::TooLowGasPriceToleranceForDeploy => Source::Client,
         }
     }
 
@@ -276,9 +282,8 @@ impl TestScenario {
             TestScenario::FromPeerExpired(TxnType::V1)
             | TestScenario::FromClientExpired(TxnType::V1) => {
                 let txn = TransactionV1Builder::new_session(
-                    TransactionSessionKind::Standard,
+                    TransactionCategory::Large,
                     Bytes::from(vec![1]),
-                    "call",
                 )
                 .with_chain_name("casper-example")
                 .with_timestamp(Timestamp::zero())
@@ -301,9 +306,8 @@ impl TestScenario {
                 TxnType::Deploy => Transaction::from(Deploy::random_valid_native_transfer(rng)),
                 TxnType::V1 => {
                     let txn = TransactionV1Builder::new_session(
-                        TransactionSessionKind::Standard,
+                        TransactionCategory::Large,
                         Bytes::from(vec![1]),
-                        "call",
                     )
                     .with_chain_name("casper-example")
                     .with_timestamp(Timestamp::now())
@@ -320,9 +324,8 @@ impl TestScenario {
             }
             TestScenario::FromClientSignedByAdmin(TxnType::V1) => {
                 let txn = TransactionV1Builder::new_session(
-                    TransactionSessionKind::Standard,
+                    TransactionCategory::Large,
                     Bytes::from(vec![1]),
-                    "call",
                 )
                 .with_chain_name("casper-example")
                 .with_timestamp(Timestamp::now())
@@ -516,9 +519,8 @@ impl TestScenario {
                     ),
                     TxnType::V1 => {
                         let txn = TransactionV1Builder::new_session(
-                            TransactionSessionKind::Standard,
+                            TransactionCategory::Large,
                             Bytes::from(vec![1]),
-                            "call",
                         )
                         .with_chain_name("casper-example")
                         .with_timestamp(timestamp)
@@ -543,9 +545,8 @@ impl TestScenario {
                     ),
                     TxnType::V1 => {
                         let txn = TransactionV1Builder::new_session(
-                            TransactionSessionKind::Standard,
+                            TransactionCategory::Large,
                             Bytes::from(vec![1]),
-                            "call",
                         )
                         .with_chain_name("casper-example")
                         .with_timestamp(timestamp)
@@ -568,6 +569,24 @@ impl TestScenario {
                     .build()
                     .expect("must create classic mode transaction");
                 Transaction::from(classic_mode_transaction)
+            }
+            TestScenario::TooLowGasPriceToleranceForTransactionV1 => {
+                const TOO_LOW_GAS_PRICE_TOLERANCE: u8 = 0;
+
+                let fixed_mode_transaction = TransactionV1Builder::new_random(rng)
+                    .with_pricing_mode(PricingMode::Fixed {
+                        gas_price_tolerance: TOO_LOW_GAS_PRICE_TOLERANCE,
+                    })
+                    .with_chain_name("casper-example")
+                    .build()
+                    .expect("must create fixed mode transaction");
+                Transaction::from(fixed_mode_transaction)
+            }
+            TestScenario::TooLowGasPriceToleranceForDeploy => {
+                const TOO_LOW_GAS_PRICE_TOLERANCE: u64 = 0;
+
+                let deploy = Deploy::random_with_gas_price(rng, TOO_LOW_GAS_PRICE_TOLERANCE);
+                Transaction::from(deploy)
             }
         }
     }
@@ -623,6 +642,8 @@ impl TestScenario {
                 }
             }
             TestScenario::InvalidPricingModeForTransactionV1 => false,
+            TestScenario::TooLowGasPriceToleranceForTransactionV1 => false,
+            TestScenario::TooLowGasPriceToleranceForDeploy => false,
         }
     }
 
@@ -632,6 +653,18 @@ impl TestScenario {
             TestScenario::FromClientRepeatedValidTransaction(_)
                 | TestScenario::FromPeerRepeatedValidTransaction(_)
         )
+    }
+
+    fn contract_scenario(&self) -> Option<ContractScenario> {
+        match self {
+            TestScenario::FromPeerCustomPaymentContract(contract_scenario)
+            | TestScenario::FromPeerSessionContract(_, contract_scenario)
+            | TestScenario::FromClientCustomPaymentContract(contract_scenario)
+            | TestScenario::FromClientSessionContract(_, contract_scenario) => {
+                Some(*contract_scenario)
+            }
+            _ => None,
+        }
     }
 }
 
@@ -766,8 +799,7 @@ impl reactor::Reactor for Reactor {
                         BalanceIdentifier::Refund => {
                             responder
                                 .respond(BalanceResult::Failure(
-                                    TrackingCopyError::NamedKeyNotFound("refund".to_string())
-                                        .into(),
+                                    TrackingCopyError::NamedKeyNotFound("refund".to_string()),
                                 ))
                                 .ignore::<Self::Event>();
                             return Effects::new();
@@ -775,8 +807,7 @@ impl reactor::Reactor for Reactor {
                         BalanceIdentifier::Payment => {
                             responder
                                 .respond(BalanceResult::Failure(
-                                    TrackingCopyError::NamedKeyNotFound("payment".to_string())
-                                        .into(),
+                                    TrackingCopyError::NamedKeyNotFound("payment".to_string()),
                                 ))
                                 .ignore::<Self::Event>();
                             return Effects::new();
@@ -784,8 +815,7 @@ impl reactor::Reactor for Reactor {
                         BalanceIdentifier::Accumulate => {
                             responder
                                 .respond(BalanceResult::Failure(
-                                    TrackingCopyError::NamedKeyNotFound("accumulate".to_string())
-                                        .into(),
+                                    TrackingCopyError::NamedKeyNotFound("accumulate".to_string()),
                                 ))
                                 .ignore::<Self::Event>();
                             return Effects::new();
@@ -796,7 +826,7 @@ impl reactor::Reactor for Reactor {
                         None => {
                             responder
                                 .respond(BalanceResult::Failure(
-                                    TrackingCopyError::UnexpectedKeyVariant(key).into(),
+                                    TrackingCopyError::UnexpectedKeyVariant(key),
                                 ))
                                 .ignore::<Self::Event>();
                             return Effects::new();
@@ -835,7 +865,7 @@ impl reactor::Reactor for Reactor {
                 }
                 ContractRuntimeRequest::GetAddressableEntity {
                     state_root_hash: _,
-                    key,
+                    entity_addr,
                     responder,
                 } => {
                     let result = if matches!(
@@ -846,12 +876,13 @@ impl reactor::Reactor for Reactor {
                         TestScenario::FromPeerMissingAccount(_)
                     ) {
                         AddressableEntityResult::ValueNotFound("missing account".to_string())
-                    } else if let Key::Account(account_hash) = key {
-                        let account = create_account(account_hash, self.test_scenario);
+                    } else if let EntityAddr::Account(account_hash) = entity_addr {
+                        let account =
+                            create_account(AccountHash::new(account_hash), self.test_scenario);
                         AddressableEntityResult::Success {
                             entity: AddressableEntity::from(account),
                         }
-                    } else if let Key::Hash(..) = key {
+                    } else if let EntityAddr::SmartContract(..) = entity_addr {
                         match self.test_scenario {
                             TestScenario::FromPeerCustomPaymentContract(
                                 ContractScenario::MissingContractAtHash,
@@ -888,10 +919,33 @@ impl reactor::Reactor for Reactor {
                                     entity: AddressableEntity::from(contract),
                                 }
                             }
-                            _ => panic!("unexpected GetAddressableEntity: {:?}", key),
+                            _ => panic!("unexpected GetAddressableEntity: {:?}", entity_addr),
                         }
                     } else {
-                        panic!("should GetAddressableEntity using Key's Account or Hash variant");
+                        panic!(
+                            "should GetAddressableEntity using Account or SmartContract variant"
+                        );
+                    };
+                    responder.respond(result).ignore()
+                }
+                ContractRuntimeRequest::GetEntryPoint {
+                    state_root_hash: _,
+                    responder,
+                    ..
+                } => {
+                    let contract_scenario = self
+                        .test_scenario
+                        .contract_scenario()
+                        .expect("must get contract scenario");
+                    let result = match contract_scenario {
+                        ContractScenario::Valid => EntryPointsResult::Success {
+                            entry_point: EntryPointValue::V1CasperVm(EntryPoint::default()),
+                        },
+                        ContractScenario::MissingContractAtHash
+                        | ContractScenario::MissingContractAtName
+                        | ContractScenario::MissingEntryPoint => {
+                            EntryPointsResult::ValueNotFound("entry point not found".to_string())
+                        }
                     };
                     responder.respond(result).ignore()
                 }
@@ -1126,7 +1180,9 @@ async fn run_transaction_acceptor_without_timeout(
             | TestScenario::DeployWithoutTransferTarget
             | TestScenario::DeployWithoutTransferAmount
             | TestScenario::InvalidPricingModeForTransactionV1
-            | TestScenario::FromClientExpired(_) => {
+            | TestScenario::FromClientExpired(_)
+            | TestScenario::TooLowGasPriceToleranceForTransactionV1
+            | TestScenario::TooLowGasPriceToleranceForDeploy => {
                 matches!(
                     event,
                     Event::TransactionAcceptorAnnouncement(
@@ -2348,5 +2404,29 @@ async fn should_reject_transaction_v1_with_invalid_pricing_mode() {
         Err(super::Error::InvalidTransaction(InvalidTransaction::V1(
             InvalidTransactionV1::InvalidPricingMode { .. }
         )))
+    ))
+}
+
+#[tokio::test]
+async fn should_reject_transaction_v1_with_too_low_gas_price_tolerance() {
+    let test_scenario = TestScenario::TooLowGasPriceToleranceForTransactionV1;
+    let result = run_transaction_acceptor(test_scenario).await;
+    assert!(matches!(
+        result,
+        Err(super::Error::InvalidTransaction(InvalidTransaction::V1(
+            InvalidTransactionV1::GasPriceToleranceTooLow { .. }
+        )))
+    ))
+}
+
+#[tokio::test]
+async fn should_reject_deploy_with_too_low_gas_price_tolerance() {
+    let test_scenario = TestScenario::TooLowGasPriceToleranceForDeploy;
+    let result = run_transaction_acceptor(test_scenario).await;
+    assert!(matches!(
+        result,
+        Err(super::Error::InvalidTransaction(
+            InvalidTransaction::Deploy(InvalidDeploy::GasPriceToleranceTooLow { .. })
+        ))
     ))
 }

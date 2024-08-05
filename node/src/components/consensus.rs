@@ -1,6 +1,6 @@
 //! The consensus component. Provides distributed consensus among the nodes in the network.
 
-#![warn(clippy::integer_arithmetic)]
+#![warn(clippy::arithmetic_side_effects)]
 
 mod cl_context;
 mod config;
@@ -71,10 +71,10 @@ pub(crate) use traits::ValidatorSecret;
 
 const COMPONENT_NAME: &str = "consensus";
 
-#[allow(clippy::integer_arithmetic)]
+#[allow(clippy::arithmetic_side_effects)]
 mod relaxed {
     // This module exists solely to exempt the `EnumDiscriminants` macro generated code from the
-    // module-wide `clippy::integer_arithmetic` lint.
+    // module-wide `clippy::arithmetic_side_effects` lint.
 
     use casper_types::{EraId, PublicKey};
     use datasize::DataSize;
@@ -190,7 +190,7 @@ pub(crate) enum Event {
 }
 
 impl Debug for ConsensusMessage {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             ConsensusMessage::Protocol { era_id, payload: _ } => {
                 write!(f, "Protocol {{ era_id: {:?}, .. }}", era_id)
@@ -225,7 +225,7 @@ impl Display for ConsensusMessage {
 }
 
 impl Debug for ConsensusRequestMessage {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "ConsensusRequestMessage {{ era_id: {:?}, .. }}",
@@ -545,5 +545,6 @@ where
 
     fn activate_failpoint(&mut self, activation: &FailpointActivation) {
         self.message_delay_failpoint.update_from(activation);
+        self.proposal_delay_failpoint.update_from(activation);
     }
 }

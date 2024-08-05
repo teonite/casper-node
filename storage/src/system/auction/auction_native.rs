@@ -8,7 +8,7 @@ use crate::{
         mint::Mint,
         runtime_native::RuntimeNative,
     },
-    tracking_copy::TrackingCopyError,
+    tracking_copy::{TrackingCopyEntityExt, TrackingCopyError},
 };
 use casper_types::{
     account::AccountHash,
@@ -18,7 +18,7 @@ use casper_types::{
         auction::{BidAddr, BidKind, EraInfo, Error, UnbondingPurse},
         mint,
     },
-    CLTyped, CLValue, HoldsEpoch, Key, KeyTag, PublicKey, StoredValue, URef, U512,
+    CLTyped, CLValue, Key, KeyTag, PublicKey, StoredValue, URef, U512,
 };
 use std::collections::BTreeSet;
 use tracing::error;
@@ -66,15 +66,10 @@ where
 
     fn delegator_count(&mut self, bid_addr: &BidAddr) -> Result<usize, Error> {
         let prefix = bid_addr.delegators_prefix()?;
-        let keys = self
-            .tracking_copy()
-            .borrow_mut()
-            .reader()
-            .keys_with_prefix(&prefix)
-            .map_err(|err| {
-                error!("RuntimeProvider::delegator_count {:?}", err);
-                Error::Storage
-            })?;
+        let keys = self.get_keys_by_prefix(&prefix).map_err(|err| {
+            error!("RuntimeProvider::delegator_count {:?}", err);
+            Error::Storage
+        })?;
         Ok(keys.len())
     }
 
@@ -219,6 +214,20 @@ where
     fn unbond(&mut self, unbonding_purse: &UnbondingPurse) -> Result<(), Error> {
         let account_hash =
             AccountHash::from_public_key(unbonding_purse.unbonder_public_key(), crypto::blake2b);
+
+        // Do a migration if the account hasn't been migrated yet. This is just a read if it has
+        // been migrated already.
+        self.tracking_copy()
+            .borrow_mut()
+            .migrate_account(account_hash, self.protocol_version())
+            .map_err(|error| {
+                error!(
+                    "MintProvider::unbond: couldn't migrate account: {:?}",
+                    error
+                );
+                Error::Storage
+            })?;
+
         let maybe_value = self
             .tracking_copy()
             .borrow_mut()
@@ -254,7 +263,6 @@ where
                     contract.main_purse(),
                     *unbonding_purse.amount(),
                     None,
-                    HoldsEpoch::NOT_APPLICABLE, // unbonding purses do not have holds on them
                 )
                 .map_err(|_| Error::Transfer)?
                 .map_err(|_| Error::Transfer)?;
@@ -272,7 +280,6 @@ where
         target: URef,
         amount: U512,
         id: Option<u64>,
-        holds_epoch: HoldsEpoch,
     ) -> Result<Result<(), mint::Error>, Error> {
         if !(self.addressable_entity().main_purse().addr() == source.addr()
             || self.get_caller() == PublicKey::System.to_account_hash())
@@ -283,7 +290,7 @@ where
         // let gas_counter = self.gas_counter();
         self.extend_access_rights(&[source, target.into_add()]);
 
-        match self.transfer(to, source, target, amount, id, holds_epoch) {
+        match self.transfer(to, source, target, amount, id) {
             Ok(ret) => {
                 // self.set_gas_counter(gas_counter);
                 Ok(Ok(ret))
@@ -304,12 +311,8 @@ where
             return Err(Error::InvalidCaller);
         }
 
-        // let gas_counter = self.gas_counter();
         match <Self as Mint>::mint_into_existing_purse(self, existing_purse, amount) {
-            Ok(ret) => {
-                // self.set_gas_counter(gas_counter);
-                Ok(ret)
-            }
+            Ok(ret) => Ok(ret),
             Err(err) => {
                 error!("{}", err);
                 Err(Error::MintError)
@@ -328,12 +331,8 @@ where
         }
     }
 
-    fn available_balance(
-        &mut self,
-        purse: URef,
-        holds_epoch: HoldsEpoch,
-    ) -> Result<Option<U512>, Error> {
-        match <Self as Mint>::balance(self, purse, holds_epoch) {
+    fn available_balance(&mut self, purse: URef) -> Result<Option<U512>, Error> {
+        match <Self as Mint>::balance(self, purse) {
             Ok(ret) => Ok(ret),
             Err(err) => {
                 error!("{}", err);

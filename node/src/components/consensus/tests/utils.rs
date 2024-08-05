@@ -44,17 +44,13 @@ pub static CAROL_SIGNER: Lazy<Arc<NodeSigner>> =
     Lazy::new(|| NodeSigner::mock((*CAROL_SECRET_KEY).clone()));
 pub static CAROL_PUBLIC_KEY: Lazy<PublicKey> = Lazy::new(|| PublicKey::from(&*CAROL_SECRET_KEY));
 
-pub static DAVE_SECRET_KEY: Lazy<SecretKey> =
-    Lazy::new(|| SecretKey::ed25519_from_bytes([3; SecretKey::ED25519_LENGTH]).unwrap());
-pub static DAVE_SIGNER: Lazy<Arc<NodeSigner>> =
-    Lazy::new(|| NodeSigner::mock((*DAVE_SECRET_KEY).clone()));
-pub static DAVE_PUBLIC_KEY: Lazy<PublicKey> = Lazy::new(|| PublicKey::from(&*DAVE_SECRET_KEY));
+pub static DAVE_SECRET_KEY: Lazy<Arc<SecretKey>> =
+    Lazy::new(|| Arc::new(SecretKey::ed25519_from_bytes([3; SecretKey::ED25519_LENGTH]).unwrap()));
+pub static DAVE_PUBLIC_KEY: Lazy<PublicKey> = Lazy::new(|| PublicKey::from(&**DAVE_SECRET_KEY));
 
-pub static ELLEN_SECRET_KEY: Lazy<SecretKey> =
-    Lazy::new(|| SecretKey::ed25519_from_bytes([4; SecretKey::ED25519_LENGTH]).unwrap());
-pub static ELLEN_SIGNER: Lazy<Arc<NodeSigner>> =
-    Lazy::new(|| NodeSigner::mock((*ELLEN_SECRET_KEY).clone()));
-pub static ELLEN_PUBLIC_KEY: Lazy<PublicKey> = Lazy::new(|| PublicKey::from(&*ELLEN_SECRET_KEY));
+pub static ELLEN_SECRET_KEY: Lazy<Arc<SecretKey>> =
+    Lazy::new(|| Arc::new(SecretKey::ed25519_from_bytes([4; SecretKey::ED25519_LENGTH]).unwrap()));
+pub static ELLEN_PUBLIC_KEY: Lazy<PublicKey> = Lazy::new(|| PublicKey::from(&**ELLEN_SECRET_KEY));
 
 /// Loads the local chainspec and overrides timestamp and genesis account with the given stakes.
 /// The test `Chainspec` returned has eras with exactly two blocks.

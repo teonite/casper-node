@@ -1,4 +1,14 @@
 use num_rational::Ratio;
+use once_cell::sync::Lazy;
+use std::{
+    cmp,
+    collections::{BTreeMap, HashMap},
+    fmt::Debug,
+    ops::Range,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     contract_runtime::{
@@ -19,18 +29,15 @@ use crate::{
 use casper_binary_port::SpeculativeExecutionResult;
 use casper_execution_engine::engine_state::{ExecutionEngineV1, WasmV1Result};
 use casper_storage::{
-    data_access_layer::DataAccessLayer, global_state::state::lmdb::LmdbGlobalState,
+    data_access_layer::{
+        DataAccessLayer, FlushRequest, FlushResult, ProtocolUpgradeRequest, ProtocolUpgradeResult,
+        TransferResult,
+    },
+    global_state::state::{lmdb::LmdbGlobalState, CommitProvider, StateProvider},
 };
-use casper_types::{BlockHash, Chainspec, EraId, Key};
-use once_cell::sync::Lazy;
-use std::{
-    cmp,
-    collections::{BTreeMap, HashMap},
-    fmt::Debug,
-    ops::Range,
-    sync::{Arc, Mutex},
+use casper_types::{
+    BlockHash, Chainspec, Digest, EraId, Gas, GasLimited, Key, ProtocolUpgradeConfig,
 };
-use tracing::{debug, error, info};
 
 /// Maximum number of resource intensive tasks that can be run in parallel.
 ///
@@ -91,6 +98,7 @@ pub(super) async fn exec_or_requeue<REv>(
         executable_block.rewards = Some(if chainspec.core_config.compute_rewards {
             let rewards = match rewards::fetch_data_and_calculate_rewards_for_era(
                 effect_builder,
+                data_access_layer.clone(),
                 chainspec.as_ref(),
                 executable_block.clone(),
             )
@@ -106,17 +114,13 @@ pub(super) async fn exec_or_requeue<REv>(
 
             rewards
         } else {
-            //TODO instead, use a list of all the validators with 0
             BTreeMap::new()
         });
     }
 
-    let maybe_next_era_gas_price = if is_era_end {
-        let block_max_standard_count = chainspec.transaction_config.block_max_standard_count;
-        let block_max_mint_count = chainspec.transaction_config.block_max_mint_count;
-        let block_max_auction_count = chainspec.transaction_config.block_max_auction_count;
-        let block_max_install_upgrade_count =
-            chainspec.transaction_config.block_max_install_upgrade_count;
+    let maybe_next_era_gas_price = if is_era_end && executable_block.next_era_gas_price.is_none() {
+        let max_block_size = chainspec.transaction_config.max_block_size as u64;
+        let block_gas_limit = chainspec.transaction_config.block_gas_limit;
         let go_up = chainspec.vacancy_config.upper_threshold;
         let go_down = chainspec.vacancy_config.lower_threshold;
         let max = chainspec.vacancy_config.max_gas_price;
@@ -125,27 +129,70 @@ pub(super) async fn exec_or_requeue<REv>(
         let era_id = executable_block.era_id;
         let block_height = executable_block.height;
 
-        let per_block_capacity = {
-            block_max_install_upgrade_count
-                + block_max_standard_count
-                + block_max_mint_count
-                + block_max_auction_count
-        } as u64;
+        let per_block_capacity = chainspec
+            .transaction_config
+            .transaction_v1_config
+            .get_max_block_count();
 
         let switch_block_utilization_score = {
-            let has_hit_slot_limt = {
-                (executable_block.mint.len() as u32 >= block_max_mint_count)
-                    || (executable_block.auction.len() as u32 >= block_max_auction_count)
-                    || (executable_block.standard.len() as u32 >= block_max_standard_count)
-                    || (executable_block.install_upgrade.len() as u32
-                        >= block_max_install_upgrade_count)
-            };
+            let mut has_hit_slot_limt = false;
+
+            for (category, transactions) in executable_block.transaction_map.iter() {
+                let max_count = chainspec
+                    .transaction_config
+                    .transaction_v1_config
+                    .get_max_transaction_count(*category);
+                if max_count == transactions.len() as u64 {
+                    has_hit_slot_limt = true;
+                }
+            }
 
             if has_hit_slot_limt {
                 100u64
+            } else if executable_block.transactions.is_empty() {
+                0u64
             } else {
-                let num = executable_block.transactions.len() as u64;
-                Ratio::new(num * 100, per_block_capacity).to_integer()
+                let size_utilization: u64 = {
+                    let total_size_of_transactions: u64 = executable_block
+                        .transactions
+                        .iter()
+                        .map(|transaction| transaction.size_estimate() as u64)
+                        .sum();
+
+                    Ratio::new(total_size_of_transactions * 100, max_block_size).to_integer()
+                };
+
+                let gas_utilization: u64 = {
+                    let total_gas_limit: u64 = executable_block
+                        .transactions
+                        .iter()
+                        .map(|transaction| match transaction.gas_limit(&chainspec) {
+                            Ok(gas_limit) => gas_limit.value().as_u64(),
+                            Err(_) => {
+                                warn!("Unable to determine gas limit");
+                                0u64
+                            }
+                        })
+                        .sum();
+
+                    Ratio::new(total_gas_limit * 100, block_gas_limit).to_integer()
+                };
+
+                let slot_utilization = Ratio::new(
+                    executable_block.transactions.len() as u64 * 100,
+                    per_block_capacity,
+                )
+                .to_integer();
+
+                let utilization_scores = [slot_utilization, gas_utilization, size_utilization];
+
+                match utilization_scores.iter().max() {
+                    Some(max_score) => *max_score,
+                    None => {
+                        let error = BlockExecutionError::FailedToGetNewEraGasPrice { era_id };
+                        return fatal!(effect_builder, "{}", error).await;
+                    }
+                }
             }
         };
 
@@ -182,16 +229,24 @@ pub(super) async fn exec_or_requeue<REv>(
                 Some(new_gas_price)
             }
         }
+    } else if executable_block.next_era_gas_price.is_some() {
+        executable_block.next_era_gas_price
     } else {
         None
     };
 
-    let BlockAndExecutionArtifacts {
-        block,
-        approvals_hashes,
-        execution_artifacts,
-        step_outcome: maybe_step_outcome,
-    } = match run_intensive_task(move || {
+    let era_id = executable_block.era_id;
+
+    let last_switch_block_hash = if let Some(previous_era) = era_id.predecessor() {
+        let switch_block_header = effect_builder
+            .get_switch_block_header_by_era_id_from_storage(previous_era)
+            .await;
+        switch_block_header.map(|header| header.block_hash())
+    } else {
+        None
+    };
+
+    let task = move || {
         debug!("ContractRuntime: execute_finalized_block");
         execute_finalized_block(
             data_access_layer.as_ref(),
@@ -203,10 +258,15 @@ pub(super) async fn exec_or_requeue<REv>(
             key_block_height_for_activation_point,
             current_gas_price,
             maybe_next_era_gas_price,
+            last_switch_block_hash,
         )
-    })
-    .await
-    {
+    };
+    let BlockAndExecutionArtifacts {
+        block,
+        approvals_hashes,
+        execution_artifacts,
+        step_outcome: maybe_step_outcome,
+    } = match run_intensive_task(task).await {
         Ok(ret) => ret,
         Err(error) => {
             error!(%error, "failed to execute block");
@@ -335,6 +395,75 @@ pub(super) async fn exec_or_requeue<REv>(
     }
 }
 
+pub(super) async fn handle_protocol_upgrade<REv>(
+    effect_builder: EffectBuilder<REv>,
+    data_access_layer: Arc<DataAccessLayer<LmdbGlobalState>>,
+    metrics: Arc<Metrics>,
+    upgrade_config: ProtocolUpgradeConfig,
+    next_block_height: u64,
+    parent_hash: BlockHash,
+    parent_seed: Digest,
+) where
+    REv: From<ContractRuntimeRequest>
+        + From<ContractRuntimeAnnouncement>
+        + From<StorageRequest>
+        + From<MetaBlockAnnouncement>
+        + From<FatalAnnouncement>
+        + Send,
+{
+    debug!(?upgrade_config, "upgrade");
+    let start = Instant::now();
+    let upgrade_request = ProtocolUpgradeRequest::new(upgrade_config);
+
+    let result = run_intensive_task(move || {
+        let result = data_access_layer.protocol_upgrade(upgrade_request);
+        if result.is_success() {
+            info!("committed upgrade");
+            metrics
+                .commit_upgrade
+                .observe(start.elapsed().as_secs_f64());
+            let flush_req = FlushRequest::new();
+            if let FlushResult::Failure(err) = data_access_layer.flush(flush_req) {
+                return Err(format!("{:?}", err));
+            }
+        }
+
+        Ok(result)
+    })
+    .await;
+
+    match result {
+        Err(error_msg) => {
+            // The only way this happens is if there is a problem in the flushing.
+            error!(%error_msg, ":Error in post upgrade flush");
+            fatal!(effect_builder, "{}", error_msg).await;
+        }
+        Ok(result) => match result {
+            ProtocolUpgradeResult::RootNotFound => {
+                let error_msg = "Root not found for protocol upgrade";
+                fatal!(effect_builder, "{}", error_msg).await;
+            }
+            ProtocolUpgradeResult::Failure(err) => {
+                fatal!(effect_builder, "{:?}", err).await;
+            }
+            ProtocolUpgradeResult::Success {
+                post_state_hash, ..
+            } => {
+                let post_upgrade_state = ExecutionPreState::new(
+                    next_block_height,
+                    post_state_hash,
+                    parent_hash,
+                    parent_seed,
+                );
+
+                effect_builder
+                    .update_contract_runtime_state(post_upgrade_state)
+                    .await
+            }
+        },
+    }
+}
+
 fn generate_range_by_index(
     highest_era: u64,
     batch_size: u64,
@@ -383,6 +512,25 @@ pub(super) fn calculate_prune_eras(
     }
 
     Some(range.map(EraId::new).map(Key::EraInfo).collect())
+}
+
+pub(crate) fn spec_exec_from_transfer_result(
+    limit: Gas,
+    transfer_result: TransferResult,
+    block_hash: BlockHash,
+) -> SpeculativeExecutionResult {
+    let transfers = transfer_result.transfers().to_owned();
+    let consumed = limit;
+    let effects = transfer_result.effects().to_owned();
+    let messages = vec![];
+    let error_msg = transfer_result
+        .error()
+        .to_owned()
+        .map(|err| format!("{:?}", err));
+
+    SpeculativeExecutionResult::new(
+        block_hash, transfers, limit, consumed, effects, messages, error_msg,
+    )
 }
 
 pub(crate) fn spec_exec_from_wasm_v1_result(

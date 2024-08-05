@@ -8,46 +8,45 @@ mod tests;
 
 use std::{convert::TryFrom, net::SocketAddr, sync::Arc};
 
-use bytes::Bytes;
 use casper_binary_port::{
-    BalanceResponse, BinaryRequest, BinaryRequestHeader, BinaryRequestTag, BinaryResponse,
-    BinaryResponseAndRequest, DictionaryItemIdentifier, DictionaryQueryResult, ErrorCode,
-    GetRequest, GetTrieFullResult, GlobalStateQueryResult, GlobalStateRequest, InformationRequest,
-    InformationRequestTag, NodeStatus, PayloadType, PurseIdentifier, ReactorStateName, RecordId,
-    TransactionWithExecutionInfo,
+    BalanceResponse, BinaryMessage, BinaryMessageCodec, BinaryRequest, BinaryRequestHeader,
+    BinaryRequestTag, BinaryResponse, BinaryResponseAndRequest, DictionaryItemIdentifier,
+    DictionaryQueryResult, EraIdentifier, ErrorCode, GetRequest, GetTrieFullResult,
+    GlobalStateQueryResult, GlobalStateRequest, InformationRequest, InformationRequestTag,
+    KeyPrefix, NodeStatus, PayloadType, PurseIdentifier, ReactorStateName, RecordId,
+    RewardResponse, TransactionWithExecutionInfo,
 };
 use casper_storage::{
     data_access_layer::{
         balance::BalanceHandling,
+        prefixed_values::{PrefixedValuesRequest, PrefixedValuesResult},
         tagged_values::{TaggedValuesRequest, TaggedValuesResult, TaggedValuesSelection},
         BalanceIdentifier, BalanceRequest, BalanceResult, ProofHandling, ProofsResult,
-        QueryRequest, QueryResult, TrieRequest,
+        QueryRequest, QueryResult, SeigniorageRecipientsRequest, SeigniorageRecipientsResult,
+        TrieRequest,
     },
     global_state::trie::TrieRaw,
+    system::auction,
+    tracking_copy::TrackingCopyError,
+    KeyPrefix as StorageKeyPrefix,
 };
 use casper_types::{
     addressable_entity::NamedKeyAddr,
     bytesrepr::{self, FromBytes, ToBytes},
-    BlockHeader, BlockIdentifier, Chainspec, Digest, EntityAddr, GlobalStateIdentifier, HoldsEpoch,
-    Key, Peers, ProtocolVersion, SignedBlock, StoredValue, TimeDiff, Timestamp, Transaction,
+    BlockHeader, BlockIdentifier, Chainspec, Digest, EntityAddr, GlobalStateIdentifier, Key, Peers,
+    ProtocolVersion, Rewards, SignedBlock, StoredValue, TimeDiff, Transaction,
 };
 
 use datasize::DataSize;
-use futures::{future::BoxFuture, FutureExt};
-use juliet::{
-    io::IoCoreBuilder,
-    protocol::ProtocolBuilder,
-    rpc::{JulietRpcServer, RpcBuilder},
-    ChannelConfiguration, ChannelId,
-};
+use futures::{future::BoxFuture, FutureExt, SinkExt, StreamExt};
 use once_cell::sync::OnceCell;
 use prometheus::Registry;
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
     join,
     net::{TcpListener, TcpStream},
     sync::{Notify, OwnedSemaphorePermit, Semaphore},
 };
+use tokio_util::codec::Framed;
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -148,6 +147,10 @@ where
         BinaryRequest::TrySpeculativeExec { transaction } => {
             metrics.binary_port_try_speculative_exec_count.inc();
             if !config.allow_request_speculative_exec {
+                debug!(
+                    hash = %transaction.hash(),
+                    "received a request for speculative execution while the feature is disabled"
+                );
                 return BinaryResponse::new_error(ErrorCode::FunctionDisabled, protocol_version);
             }
             let response =
@@ -200,11 +203,13 @@ where
         } if RecordId::try_from(record_type_tag) == Ok(RecordId::Transfer) => {
             metrics.binary_port_get_record_count.inc();
             let Ok(block_hash) = bytesrepr::deserialize_from_slice(&key) else {
+                debug!("received an incorrectly serialized key for a transfer record");
                 return BinaryResponse::new_error(ErrorCode::BadRequest, protocol_version);
             };
             let Some(transfers) = effect_builder
                 .get_block_transfers_from_storage(block_hash)
-                .await else {
+                .await
+            else {
                 return BinaryResponse::new_empty(protocol_version);
             };
             let Ok(serialized) = bincode::serialize(&transfers) else {
@@ -237,12 +242,19 @@ where
         GetRequest::Information { info_type_tag, key } => {
             metrics.binary_port_get_info_count.inc();
             let Ok(tag) = InformationRequestTag::try_from(info_type_tag) else {
+                debug!(
+                    tag = info_type_tag,
+                    "received an unknown information request tag"
+                );
                 return BinaryResponse::new_error(ErrorCode::UnsupportedRequest, protocol_version);
             };
-            let Ok(req) = InformationRequest::try_from((tag, &key[..])) else {
-                return BinaryResponse::new_error(ErrorCode::BadRequest, protocol_version);
-            };
-            handle_info_request(req, effect_builder, protocol_version).await
+            match InformationRequest::try_from((tag, &key[..])) {
+                Ok(req) => handle_info_request(req, effect_builder, protocol_version).await,
+                Err(error) => {
+                    debug!(?tag, %error, "failed to parse an information request");
+                    BinaryResponse::new_error(ErrorCode::BadRequest, protocol_version)
+                }
+            }
         }
         GetRequest::State(req) => {
             metrics.binary_port_get_state_count.inc();
@@ -250,6 +262,51 @@ where
         }
     }
 }
+
+async fn handle_get_items_by_prefix<REv>(
+    state_identifier: Option<GlobalStateIdentifier>,
+    key_prefix: KeyPrefix,
+    effect_builder: EffectBuilder<REv>,
+    protocol_version: ProtocolVersion,
+) -> BinaryResponse
+where
+    REv: From<Event> + From<ContractRuntimeRequest> + From<StorageRequest>,
+{
+    let Some(state_root_hash) = resolve_state_root_hash(effect_builder, state_identifier).await
+    else {
+        return BinaryResponse::new_error(ErrorCode::RootNotFound, protocol_version);
+    };
+    let storage_key_prefix = match key_prefix {
+        KeyPrefix::DelegatorBidAddrsByValidator(hash) => {
+            StorageKeyPrefix::DelegatorBidAddrsByValidator(hash)
+        }
+        KeyPrefix::MessagesByEntity(addr) => StorageKeyPrefix::MessagesByEntity(addr),
+        KeyPrefix::MessagesByEntityAndTopic(addr, topic) => {
+            StorageKeyPrefix::MessagesByEntityAndTopic(addr, topic)
+        }
+        KeyPrefix::NamedKeysByEntity(addr) => StorageKeyPrefix::NamedKeysByEntity(addr),
+        KeyPrefix::GasBalanceHoldsByPurse(purse) => StorageKeyPrefix::GasBalanceHoldsByPurse(purse),
+        KeyPrefix::ProcessingBalanceHoldsByPurse(purse) => {
+            StorageKeyPrefix::ProcessingBalanceHoldsByPurse(purse)
+        }
+        KeyPrefix::EntryPointsV1ByEntity(addr) => StorageKeyPrefix::EntryPointsV1ByEntity(addr),
+        KeyPrefix::EntryPointsV2ByEntity(addr) => StorageKeyPrefix::EntryPointsV2ByEntity(addr),
+    };
+    let request = PrefixedValuesRequest::new(state_root_hash, storage_key_prefix);
+    match effect_builder.get_prefixed_values(request).await {
+        PrefixedValuesResult::Success { values, .. } => {
+            BinaryResponse::from_value(values, protocol_version)
+        }
+        PrefixedValuesResult::RootNotFound => {
+            BinaryResponse::new_error(ErrorCode::RootNotFound, protocol_version)
+        }
+        PrefixedValuesResult::Failure(error) => {
+            debug!(%error, "failed when querying for values by prefix");
+            BinaryResponse::new_error(ErrorCode::InternalError, protocol_version)
+        }
+    }
+}
+
 async fn handle_get_all_items<REv>(
     state_identifier: Option<GlobalStateIdentifier>,
     key_tag: casper_types::KeyTag,
@@ -259,8 +316,9 @@ async fn handle_get_all_items<REv>(
 where
     REv: From<Event> + From<ContractRuntimeRequest> + From<StorageRequest>,
 {
-    let Some(state_root_hash) = resolve_state_root_hash(effect_builder, state_identifier).await else {
-        return BinaryResponse::new_empty(protocol_version)
+    let Some(state_root_hash) = resolve_state_root_hash(effect_builder, state_identifier).await
+    else {
+        return BinaryResponse::new_error(ErrorCode::RootNotFound, protocol_version);
     };
     let request = TaggedValuesRequest::new(state_root_hash, TaggedValuesSelection::All(key_tag));
     match effect_builder.get_tagged_values(request).await {
@@ -268,10 +326,10 @@ where
             BinaryResponse::from_value(values, protocol_version)
         }
         TaggedValuesResult::RootNotFound => {
-            let error_code = ErrorCode::RootNotFound;
-            BinaryResponse::new_error(error_code, protocol_version)
+            BinaryResponse::new_error(ErrorCode::RootNotFound, protocol_version)
         }
-        TaggedValuesResult::Failure(_err) => {
+        TaggedValuesResult::Failure(error) => {
+            debug!(%error, "failed when querying for all values by tag");
             BinaryResponse::new_error(ErrorCode::InternalError, protocol_version)
         }
     }
@@ -282,7 +340,7 @@ async fn handle_state_request<REv>(
     request: GlobalStateRequest,
     protocol_version: ProtocolVersion,
     config: &Config,
-    chainspec: &Chainspec,
+    _chainspec: &Chainspec,
 ) -> BinaryResponse
 where
     REv: From<Event>
@@ -296,8 +354,10 @@ where
             base_key,
             path,
         } => {
-            let Some(state_root_hash) = resolve_state_root_hash(effect_builder, state_identifier).await else {
-                return BinaryResponse::new_empty(protocol_version);
+            let Some(state_root_hash) =
+                resolve_state_root_hash(effect_builder, state_identifier).await
+            else {
+                return BinaryResponse::new_error(ErrorCode::RootNotFound, protocol_version);
             };
             match get_global_state_item(effect_builder, state_root_hash, base_key, path).await {
                 Ok(Some(result)) => BinaryResponse::from_value(result, protocol_version),
@@ -310,6 +370,7 @@ where
             key_tag,
         } => {
             if !config.allow_request_get_all_values {
+                debug!(%key_tag, "received a request for items by key tag while the feature is disabled");
                 BinaryResponse::new_error(ErrorCode::FunctionDisabled, protocol_version)
             } else {
                 handle_get_all_items(state_identifier, key_tag, effect_builder, protocol_version)
@@ -317,7 +378,8 @@ where
             }
         }
         GlobalStateRequest::Trie { trie_key } => {
-            let response = if !config.allow_request_get_trie {
+            if !config.allow_request_get_trie {
+                debug!(%trie_key, "received a trie request while the feature is disabled");
                 BinaryResponse::new_error(ErrorCode::FunctionDisabled, protocol_version)
             } else {
                 let req = TrieRequest::new(trie_key, None);
@@ -326,19 +388,21 @@ where
                         GetTrieFullResult::new(result.map(TrieRaw::into_inner)),
                         protocol_version,
                     ),
-                    Err(_err) => {
+                    Err(error) => {
+                        debug!(%error, "failed when querying for a trie");
                         BinaryResponse::new_error(ErrorCode::InternalError, protocol_version)
                     }
                 }
-            };
-            response
+            }
         }
         GlobalStateRequest::DictionaryItem {
             state_identifier,
             identifier,
         } => {
-            let Some(state_root_hash) = resolve_state_root_hash(effect_builder, state_identifier).await else {
-                return BinaryResponse::new_empty(protocol_version);
+            let Some(state_root_hash) =
+                resolve_state_root_hash(effect_builder, state_identifier).await
+            else {
+                return BinaryResponse::new_error(ErrorCode::RootNotFound, protocol_version);
             };
             let result = match identifier {
                 DictionaryItemIdentifier::AccountNamedKey {
@@ -405,38 +469,32 @@ where
                 Err(err) => BinaryResponse::new_error(err, protocol_version),
             }
         }
-        GlobalStateRequest::BalanceByBlock {
-            block_identifier,
-            purse_identifier,
-        } => {
-            let Some(header) = resolve_block_header(effect_builder, block_identifier).await else {
-                return BinaryResponse::new_empty(protocol_version);
-            };
-            get_balance(
-                effect_builder,
-                *header.state_root_hash(),
-                header.timestamp(),
-                purse_identifier,
-                protocol_version,
-                chainspec.core_config.gas_hold_interval,
-            )
-            .await
-        }
-        GlobalStateRequest::BalanceByStateRoot {
+        GlobalStateRequest::Balance {
             state_identifier,
             purse_identifier,
-            timestamp,
         } => {
-            let Some(state_root_hash) = resolve_state_root_hash(effect_builder, state_identifier).await else {
+            let Some(state_root_hash) =
+                resolve_state_root_hash(effect_builder, state_identifier).await
+            else {
                 return BinaryResponse::new_empty(protocol_version);
             };
             get_balance(
                 effect_builder,
                 state_root_hash,
-                timestamp,
                 purse_identifier,
                 protocol_version,
-                chainspec.core_config.gas_hold_interval,
+            )
+            .await
+        }
+        GlobalStateRequest::ItemsByPrefix {
+            state_identifier,
+            key_prefix,
+        } => {
+            handle_get_items_by_prefix(
+                state_identifier,
+                key_prefix,
+                effect_builder,
+                protocol_version,
             )
             .await
         }
@@ -461,24 +519,42 @@ where
             let named_keys = match &*value {
                 StoredValue::Account(account) => account.named_keys(),
                 StoredValue::Contract(contract) => contract.named_keys(),
-                _ => return Err(ErrorCode::DictionaryURefNotFound),
+                value => {
+                    debug!(
+                        value_type = value.type_name(),
+                        "unexpected stored value found when querying for a dictionary"
+                    );
+                    return Err(ErrorCode::DictionaryURefNotFound);
+                }
             };
             let Some(uref) = named_keys.get(&dictionary_name).and_then(Key::as_uref) else {
+                debug!(
+                    dictionary_name,
+                    "dictionary seed URef not found in named keys"
+                );
                 return Err(ErrorCode::DictionaryURefNotFound);
             };
             let key = Key::dictionary(*uref, dictionary_item_key.as_bytes());
             let Some(query_result) =
                 get_global_state_item(effect_builder, state_root_hash, key, vec![]).await?
-                else {
+            else {
                 return Ok(None);
             };
 
             Ok(Some(DictionaryQueryResult::new(key, query_result)))
         }
-        QueryResult::RootNotFound | QueryResult::ValueNotFound(_) => {
+        QueryResult::RootNotFound => {
+            debug!("root not found when querying for a dictionary seed URef");
             Err(ErrorCode::DictionaryURefNotFound)
         }
-        QueryResult::Failure(_) => Err(ErrorCode::FailedQuery),
+        QueryResult::ValueNotFound(error) => {
+            debug!(%error, "value not found when querying for a dictionary seed URef");
+            Err(ErrorCode::DictionaryURefNotFound)
+        }
+        QueryResult::Failure(error) => {
+            debug!(%error, "failed when querying for a dictionary seed URef");
+            Err(ErrorCode::FailedQuery)
+        }
     }
 }
 
@@ -498,34 +574,54 @@ where
     let req = QueryRequest::new(state_root_hash, Key::NamedKey(key_addr), vec![]);
     match effect_builder.query_global_state(req).await {
         QueryResult::Success { value, .. } => {
-            let StoredValue::NamedKey(key_val) = &*value  else {
-                return Err(ErrorCode::DictionaryURefNotFound);
+            let key_val = match &*value {
+                StoredValue::NamedKey(key_val) => key_val,
+                value => {
+                    debug!(
+                        value_type = value.type_name(),
+                        "unexpected stored value found when querying for a dictionary"
+                    );
+                    return Err(ErrorCode::DictionaryURefNotFound);
+                }
             };
-            let Ok(Key::URef(uref)) = key_val.get_key() else {
-                return Err(ErrorCode::DictionaryURefNotFound);
+            let uref = match key_val.get_key() {
+                Ok(Key::URef(uref)) => uref,
+                result => {
+                    debug!(
+                        ?result,
+                        "unexpected named key result when querying for a dictionary"
+                    );
+                    return Err(ErrorCode::DictionaryURefNotFound);
+                }
             };
             let key = Key::dictionary(uref, dictionary_item_key.as_bytes());
             let Some(query_result) =
                 get_global_state_item(effect_builder, state_root_hash, key, vec![]).await?
-                else {
+            else {
                 return Ok(None);
             };
             Ok(Some(DictionaryQueryResult::new(key, query_result)))
         }
-        QueryResult::RootNotFound | QueryResult::ValueNotFound(_) => {
+        QueryResult::RootNotFound => {
+            debug!("root not found when querying for a dictionary seed URef");
             Err(ErrorCode::DictionaryURefNotFound)
         }
-        QueryResult::Failure(_) => Err(ErrorCode::FailedQuery),
+        QueryResult::ValueNotFound(error) => {
+            debug!(%error, "value not found when querying for a dictionary seed URef");
+            Err(ErrorCode::DictionaryURefNotFound)
+        }
+        QueryResult::Failure(error) => {
+            debug!(%error, "failed when querying for a dictionary seed URef");
+            Err(ErrorCode::FailedQuery)
+        }
     }
 }
 
 async fn get_balance<REv>(
     effect_builder: EffectBuilder<REv>,
     state_root_hash: Digest,
-    timestamp: Timestamp,
     purse_identifier: PurseIdentifier,
     protocol_version: ProtocolVersion,
-    gas_hold_interval: TimeDiff,
 ) -> BinaryResponse
 where
     REv: From<Event>
@@ -541,13 +637,10 @@ where
         PurseIdentifier::Account(account) => BalanceIdentifier::Account(account),
         PurseIdentifier::Entity(entity) => BalanceIdentifier::Entity(entity),
     };
-    let balance_handling = BalanceHandling::Available {
-        holds_epoch: HoldsEpoch::from_timestamp(timestamp, gas_hold_interval),
-    };
+    let balance_handling = BalanceHandling::Available;
 
     let balance_req = BalanceRequest::new(
         state_root_hash,
-        timestamp.into(),
         protocol_version,
         balance_id,
         balance_handling,
@@ -566,7 +659,8 @@ where
             let ProofsResult::Proofs {
                 total_balance_proof,
                 balance_holds,
-            } = proofs_result else {
+            } = proofs_result
+            else {
                 warn!("binary port received no proofs for a balance request with proofs");
                 return BinaryResponse::new_error(ErrorCode::InternalError, protocol_version);
             };
@@ -578,7 +672,11 @@ where
             };
             BinaryResponse::from_value(response, protocol_version)
         }
-        BalanceResult::Failure(_) => {
+        BalanceResult::Failure(TrackingCopyError::KeyNotFound(_)) => {
+            BinaryResponse::new_error(ErrorCode::PurseNotFound, protocol_version)
+        }
+        BalanceResult::Failure(error) => {
+            debug!(%error, "failed when querying for a balance");
             BinaryResponse::new_error(ErrorCode::FailedQuery, protocol_version)
         }
     }
@@ -601,8 +699,14 @@ where
             Ok(Some(GlobalStateQueryResult::new(*value, proofs)))
         }
         QueryResult::RootNotFound => Err(ErrorCode::RootNotFound),
-        QueryResult::ValueNotFound(_) => Err(ErrorCode::NotFound),
-        QueryResult::Failure(_) => Err(ErrorCode::FailedQuery),
+        QueryResult::ValueNotFound(error) => {
+            debug!(%error, "value not found when querying for a global state item");
+            Err(ErrorCode::NotFound)
+        }
+        QueryResult::Failure(error) => {
+            debug!(%error, "failed when querying for a global state item");
+            Err(ErrorCode::FailedQuery)
+        }
     }
 }
 
@@ -634,7 +738,8 @@ where
             };
             let Some(block) = effect_builder
                 .get_block_at_height_with_metadata_from_storage(height, true)
-                .await else {
+                .await
+            else {
                 return BinaryResponse::new_empty(protocol_version);
             };
             BinaryResponse::from_value(
@@ -646,10 +751,10 @@ where
             hash,
             with_finalized_approvals,
         } => {
-            let Some((transaction, execution_info)) =
-                effect_builder
-                    .get_transaction_and_exec_info_from_storage(hash, with_finalized_approvals)
-                    .await else {
+            let Some((transaction, execution_info)) = effect_builder
+                .get_transaction_and_exec_info_from_storage(hash, with_finalized_approvals)
+                .await
+            else {
                 return BinaryResponse::new_empty(protocol_version);
             };
             BinaryResponse::from_value(
@@ -745,13 +850,11 @@ where
             let reactor_state = ReactorStateName::new(reactor_state);
 
             let Ok(uptime) = TimeDiff::try_from(node_uptime) else {
-                return BinaryResponse::new_error(
-                    ErrorCode::InternalError,
-                    protocol_version,
-                )
+                return BinaryResponse::new_error(ErrorCode::InternalError, protocol_version);
             };
 
             let status = NodeStatus {
+                protocol_version,
                 peers: Peers::from(peers),
                 build_version: crate::VERSION_STRING.clone(),
                 chainspec_name: network_name.into(),
@@ -769,6 +872,109 @@ where
                     .map(|header| header.block_hash()),
             };
             BinaryResponse::from_value(status, protocol_version)
+        }
+        InformationRequest::Reward {
+            era_identifier,
+            validator,
+            delegator,
+        } => {
+            let Some(header) =
+                resolve_era_switch_block_header(effect_builder, era_identifier).await
+            else {
+                return BinaryResponse::new_error(ErrorCode::SwitchBlockNotFound, protocol_version);
+            };
+            let Some(previous_height) = header.height().checked_sub(1) else {
+                // there's not going to be any rewards for the genesis block
+                debug!("received a request for rewards in the genesis block");
+                return BinaryResponse::new_empty(protocol_version);
+            };
+            let Some(parent_header) = effect_builder
+                .get_block_header_at_height_from_storage(previous_height, true)
+                .await
+            else {
+                return BinaryResponse::new_error(
+                    ErrorCode::SwitchBlockParentNotFound,
+                    protocol_version,
+                );
+            };
+            let snapshot_request = SeigniorageRecipientsRequest::new(
+                *parent_header.state_root_hash(),
+                parent_header.protocol_version(),
+            );
+
+            let snapshot = match effect_builder
+                .get_seigniorage_recipients_snapshot_from_contract_runtime(snapshot_request)
+                .await
+            {
+                SeigniorageRecipientsResult::Success {
+                    seigniorage_recipients,
+                } => seigniorage_recipients,
+                SeigniorageRecipientsResult::RootNotFound => {
+                    return BinaryResponse::new_error(ErrorCode::RootNotFound, protocol_version)
+                }
+                SeigniorageRecipientsResult::Failure(error) => {
+                    warn!(%error, "failed when querying for seigniorage recipients");
+                    return BinaryResponse::new_error(ErrorCode::FailedQuery, protocol_version);
+                }
+                SeigniorageRecipientsResult::AuctionNotFound => {
+                    warn!("auction not found when querying for seigniorage recipients");
+                    return BinaryResponse::new_error(ErrorCode::InternalError, protocol_version);
+                }
+                SeigniorageRecipientsResult::ValueNotFound(error) => {
+                    warn!(%error, "value not found when querying for seigniorage recipients");
+                    return BinaryResponse::new_error(ErrorCode::InternalError, protocol_version);
+                }
+            };
+            let Some(era_end) = header.clone_era_end() else {
+                // switch block should have an era end
+                warn!(
+                    hash = %header.block_hash(),
+                    "era end not found in the switch block retrieved from storage"
+                );
+                return BinaryResponse::new_error(ErrorCode::InternalError, protocol_version);
+            };
+            let block_rewards = match era_end.rewards() {
+                Rewards::V2(rewards) => rewards,
+                _ => {
+                    return BinaryResponse::new_error(
+                        ErrorCode::UnsupportedRewardsV1Request,
+                        protocol_version,
+                    )
+                }
+            };
+            let Some(validator_rewards) = block_rewards.get(&validator) else {
+                return BinaryResponse::new_empty(protocol_version);
+            };
+
+            let seigniorage_recipient = snapshot
+                .get(&header.era_id())
+                .and_then(|era| era.get(&validator));
+            let reward = auction::reward(
+                &validator,
+                delegator.as_deref(),
+                header.era_id(),
+                validator_rewards,
+                &snapshot,
+            );
+            match (reward, seigniorage_recipient) {
+                (Ok(Some(reward)), Some(seigniorage_recipient)) => {
+                    let response = RewardResponse::new(
+                        reward,
+                        header.era_id(),
+                        *seigniorage_recipient.delegation_rate(),
+                        header.block_hash(),
+                    );
+                    BinaryResponse::from_value(response, protocol_version)
+                }
+                (Err(error), _) => {
+                    warn!(%error, "failed when calculating rewards");
+                    BinaryResponse::new_error(ErrorCode::InternalError, protocol_version)
+                }
+                _ => BinaryResponse::new_empty(protocol_version),
+            }
+        }
+        InformationRequest::ProtocolVersion => {
+            BinaryResponse::from_value(protocol_version, protocol_version)
         }
     }
 }
@@ -812,22 +1018,25 @@ where
         .await;
 
     match result {
-        SpeculativeExecutionResult::InvalidTransaction(ite) => {
-            BinaryResponse::new_error(ite.into(), protocol_version)
+        SpeculativeExecutionResult::InvalidTransaction(error) => {
+            debug!(%error, "invalid transaction submitted for speculative execution");
+            BinaryResponse::new_error(error.into(), protocol_version)
         }
         SpeculativeExecutionResult::WasmV1(spec_exec_result) => {
             BinaryResponse::from_value(spec_exec_result, protocol_version)
         }
+        SpeculativeExecutionResult::ReceivedV1Transaction => {
+            BinaryResponse::new_error(ErrorCode::ReceivedV1Transaction, protocol_version)
+        }
     }
 }
 
-async fn client_loop<REv, const N: usize, R, W>(
-    mut server: JulietRpcServer<N, R, W>,
+async fn handle_client_loop<REv>(
+    stream: TcpStream,
     effect_builder: EffectBuilder<REv>,
+    max_message_size_bytes: u32,
 ) -> Result<(), Error>
 where
-    R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin,
     REv: From<Event>
         + From<StorageRequest>
         + From<ContractRuntimeRequest>
@@ -840,20 +1049,51 @@ where
         + From<ChainspecRawBytesRequest>
         + Send,
 {
+    let mut framed = Framed::new(stream, BinaryMessageCodec::new(max_message_size_bytes));
+
     loop {
-        let Some(incoming_request) = server.next_request().await? else {
+        let Some(result) = framed.next().await else {
             debug!("remote party closed the connection");
             return Ok(());
         };
-
-        let Some(payload) = incoming_request.payload() else {
+        let result = result?;
+        let payload = result.payload();
+        if payload.is_empty() {
             return Err(Error::NoPayload);
         };
 
         let version = effect_builder.get_protocol_version().await;
-        let resp = handle_payload(effect_builder, payload, version).await;
-        let resp_and_payload = BinaryResponseAndRequest::new(resp, payload);
-        incoming_request.respond(Some(Bytes::from(ToBytes::to_bytes(&resp_and_payload)?)))
+        let (response, id) = handle_payload(effect_builder, payload, version).await;
+        framed
+            .send(BinaryMessage::new(
+                BinaryResponseAndRequest::new(response, payload, id).to_bytes()?,
+            ))
+            .await?
+    }
+}
+
+fn extract_header(payload: &[u8]) -> Result<(BinaryRequestHeader, &[u8]), ErrorCode> {
+    const BINARY_VERSION_LENGTH_BYTES: usize = std::mem::size_of::<u16>();
+
+    if payload.len() < BINARY_VERSION_LENGTH_BYTES {
+        return Err(ErrorCode::BadRequest);
+    }
+
+    let binary_protocol_version = match u16::from_bytes(payload) {
+        Ok((binary_protocol_version, _)) => binary_protocol_version,
+        Err(_) => return Err(ErrorCode::BadRequest),
+    };
+
+    if binary_protocol_version != BinaryRequestHeader::BINARY_REQUEST_VERSION {
+        return Err(ErrorCode::BinaryProtocolVersionMismatch);
+    }
+
+    match BinaryRequestHeader::from_bytes(payload) {
+        Ok((header, remainder)) => Ok((header, remainder)),
+        Err(error) => {
+            debug!(%error, "failed to parse binary request header");
+            Err(ErrorCode::BadRequest)
+        }
     }
 }
 
@@ -861,41 +1101,60 @@ async fn handle_payload<REv>(
     effect_builder: EffectBuilder<REv>,
     payload: &[u8],
     protocol_version: ProtocolVersion,
-) -> BinaryResponse
+) -> (BinaryResponse, u16)
 where
     REv: From<Event>,
 {
-    let Ok((header, remainder)) = BinaryRequestHeader::from_bytes(payload) else {
-        return BinaryResponse::new_error(ErrorCode::BadRequest, protocol_version);
+    let (header, remainder) = match extract_header(payload) {
+        Ok(header) => header,
+        Err(error_code) => return (BinaryResponse::new_error(error_code, protocol_version), 0),
     };
+
+    let request_id = header.id();
 
     if !header
         .protocol_version()
         .is_compatible_with(&protocol_version)
     {
-        return BinaryResponse::new_error(ErrorCode::UnsupportedProtocolVersion, protocol_version);
+        return (
+            BinaryResponse::new_error(ErrorCode::UnsupportedProtocolVersion, protocol_version),
+            request_id,
+        );
     }
 
     // we might receive a request added in a minor version if we're behind
     let Ok(tag) = BinaryRequestTag::try_from(header.type_tag()) else {
-        return BinaryResponse::new_error(ErrorCode::UnsupportedRequest, protocol_version);
+        return (
+            BinaryResponse::new_error(ErrorCode::UnsupportedRequest, protocol_version),
+            request_id,
+        );
     };
 
-    let Ok(request) = BinaryRequest::try_from((tag, remainder)) else {
-        return BinaryResponse::new_error(ErrorCode::BadRequest, protocol_version);
+    let request = match BinaryRequest::try_from((tag, remainder)) {
+        Ok(request) => request,
+        Err(error) => {
+            debug!(%error, "failed to parse binary request body");
+            return (
+                BinaryResponse::new_error(ErrorCode::BadRequest, protocol_version),
+                request_id,
+            );
+        }
     };
 
-    effect_builder
-        .make_request(
-            |responder| Event::HandleRequest { request, responder },
-            QueueKind::Regular,
-        )
-        .await
+    (
+        effect_builder
+            .make_request(
+                |responder| Event::HandleRequest { request, responder },
+                QueueKind::Regular,
+            )
+            .await,
+        request_id,
+    )
 }
 
 async fn handle_client<REv>(
     addr: SocketAddr,
-    mut client: TcpStream,
+    stream: TcpStream,
     effect_builder: EffectBuilder<REv>,
     config: Arc<Config>,
     _permit: OwnedSemaphorePermit,
@@ -912,12 +1171,9 @@ async fn handle_client<REv>(
         + From<ChainspecRawBytesRequest>
         + Send,
 {
-    let (reader, writer) = client.split();
-    // We are a server, we won't make any requests of our own, but we need to keep the client
-    // around, since dropping the client will trigger a server shutdown.
-    let (_client, server) = new_rpc_builder(&config).build(reader, writer);
-
-    if let Err(err) = client_loop(server, effect_builder).await {
+    if let Err(err) =
+        handle_client_loop(stream, effect_builder, config.max_message_size_bytes).await
+    {
         // Low severity is used to prevent malicious clients from causing log floods.
         info!(%addr, err=display_error(&err), "binary port client handler error");
     }
@@ -997,18 +1253,6 @@ impl Finalize for BinaryPort {
     }
 }
 
-fn new_rpc_builder(config: &Config) -> RpcBuilder<1> {
-    let protocol_builder = ProtocolBuilder::<1>::with_default_channel_config(
-        ChannelConfiguration::default()
-            .with_request_limit(config.client_request_limit)
-            .with_max_request_payload_size(config.max_request_size_bytes)
-            .with_max_response_payload_size(config.max_response_size_bytes),
-    );
-    let io_builder = IoCoreBuilder::new(protocol_builder)
-        .buffer_size(ChannelId::new(0), config.client_request_buffer_size);
-    RpcBuilder::new(io_builder)
-}
-
 async fn resolve_block_header<REv>(
     effect_builder: EffectBuilder<REv>,
     block_identifier: Option<BlockIdentifier>,
@@ -1076,6 +1320,37 @@ where
             .get_highest_complete_block_header_from_storage()
             .await
             .map(|header| *header.state_root_hash()),
+    }
+}
+
+async fn resolve_era_switch_block_header<REv>(
+    effect_builder: EffectBuilder<REv>,
+    era_identifier: Option<EraIdentifier>,
+) -> Option<BlockHeader>
+where
+    REv: From<Event> + From<ContractRuntimeRequest> + From<StorageRequest>,
+{
+    match era_identifier {
+        Some(EraIdentifier::Era(era_id)) => {
+            effect_builder
+                .get_switch_block_header_by_era_id_from_storage(era_id)
+                .await
+        }
+        Some(EraIdentifier::Block(block_identifier)) => {
+            let header = resolve_block_header(effect_builder, Some(block_identifier)).await?;
+            if header.is_switch_block() {
+                Some(header)
+            } else {
+                effect_builder
+                    .get_switch_block_header_by_era_id_from_storage(header.era_id())
+                    .await
+            }
+        }
+        None => {
+            effect_builder
+                .get_latest_switch_block_header_from_storage()
+                .await
+        }
     }
 }
 

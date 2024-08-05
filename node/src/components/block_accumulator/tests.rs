@@ -1021,7 +1021,7 @@ fn accumulator_should_leap() {
     }
 
     let upgrade_attempt_execution_threshold = attempt_execution_threshold * 2;
-    block_accumulator.register_activation_point(ActivationPoint::EraId(era_id.successor()));
+    block_accumulator.register_activation_point(Some(ActivationPoint::EraId(era_id.successor())));
     let offset = centurion.saturating_sub(upgrade_attempt_execution_threshold);
     for height in offset..centurion {
         expected_leap_instruction(
@@ -2022,7 +2022,7 @@ async fn block_accumulator_doesnt_purge_with_delayed_block_execution() {
     // block can be delayed. Since we would purge an acceptor if the purge interval has passed,
     // we want to simulate a situation in which the purge interval was exceeded in order to test
     // the special case that if an acceptor that had sufficient finality, it is not purged.
-    tokio::time::sleep(
+    time::sleep(
         Duration::from(runner.reactor().block_accumulator.purge_interval) + Duration::from_secs(1),
     )
     .await;

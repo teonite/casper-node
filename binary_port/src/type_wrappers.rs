@@ -6,8 +6,11 @@ use datasize::DataSize;
 
 use casper_types::{
     bytesrepr::{self, Bytes, FromBytes, ToBytes},
-    EraId, ExecutionInfo, Key, PublicKey, TimeDiff, Timestamp, Transaction, ValidatorChange,
+    system::auction::DelegationRate,
+    BlockHash, EraId, ExecutionInfo, Key, PublicKey, TimeDiff, Timestamp, Transaction,
+    ValidatorChange, U512,
 };
+use serde::Serialize;
 
 use super::GlobalStateQueryResult;
 
@@ -39,7 +42,7 @@ macro_rules! impl_bytesrepr_for_type_wrapper {
 }
 
 /// Type representing uptime.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Uptime(u64);
 
 impl Uptime {
@@ -69,7 +72,7 @@ impl TryFrom<Uptime> for TimeDiff {
 }
 
 /// Type representing changes in consensus validators.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "datasize", derive(DataSize))]
 pub struct ConsensusValidatorChanges(BTreeMap<PublicKey, Vec<(EraId, ValidatorChange)>>);
 
@@ -92,7 +95,7 @@ impl From<ConsensusValidatorChanges> for BTreeMap<PublicKey, Vec<(EraId, Validat
 }
 
 /// Type representing network name.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct NetworkName(String);
 
 impl NetworkName {
@@ -114,7 +117,7 @@ impl From<NetworkName> for String {
 }
 
 /// Type representing the reactor state name.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct ReactorStateName(String);
 
 impl ReactorStateName {
@@ -136,7 +139,7 @@ impl From<ReactorStateName> for String {
 }
 
 /// Type representing last progress of the sync process.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct LastProgress(Timestamp);
 
 impl LastProgress {
@@ -173,8 +176,89 @@ impl GetTrieFullResult {
     }
 }
 
+/// Type representing the reward of a validator or a delegator.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct RewardResponse {
+    amount: U512,
+    era_id: EraId,
+    delegation_rate: DelegationRate,
+    switch_block_hash: BlockHash,
+}
+
+impl RewardResponse {
+    /// Constructs new reward response.
+    pub fn new(
+        amount: U512,
+        era_id: EraId,
+        delegation_rate: DelegationRate,
+        switch_block_hash: BlockHash,
+    ) -> Self {
+        Self {
+            amount,
+            era_id,
+            delegation_rate,
+            switch_block_hash,
+        }
+    }
+
+    /// Returns the amount of the reward.
+    pub fn amount(&self) -> U512 {
+        self.amount
+    }
+
+    /// Returns the era ID.
+    pub fn era_id(&self) -> EraId {
+        self.era_id
+    }
+
+    /// Returns the delegation rate of the validator.
+    pub fn delegation_rate(&self) -> DelegationRate {
+        self.delegation_rate
+    }
+
+    /// Returns the switch block hash at which the reward was distributed.
+    pub fn switch_block_hash(&self) -> BlockHash {
+        self.switch_block_hash
+    }
+}
+
+impl ToBytes for RewardResponse {
+    fn to_bytes(&self) -> Result<Vec<u8>, bytesrepr::Error> {
+        let mut buffer = bytesrepr::allocate_buffer(self)?;
+        self.write_bytes(&mut buffer)?;
+        Ok(buffer)
+    }
+
+    fn serialized_length(&self) -> usize {
+        self.amount.serialized_length()
+            + self.era_id.serialized_length()
+            + self.delegation_rate.serialized_length()
+            + self.switch_block_hash.serialized_length()
+    }
+
+    fn write_bytes(&self, writer: &mut Vec<u8>) -> Result<(), bytesrepr::Error> {
+        self.amount.write_bytes(writer)?;
+        self.era_id.write_bytes(writer)?;
+        self.delegation_rate.write_bytes(writer)?;
+        self.switch_block_hash.write_bytes(writer)
+    }
+}
+
+impl FromBytes for RewardResponse {
+    fn from_bytes(bytes: &[u8]) -> Result<(Self, &[u8]), bytesrepr::Error> {
+        let (amount, remainder) = FromBytes::from_bytes(bytes)?;
+        let (era_id, remainder) = FromBytes::from_bytes(remainder)?;
+        let (delegation_rate, remainder) = FromBytes::from_bytes(remainder)?;
+        let (switch_block_hash, remainder) = FromBytes::from_bytes(remainder)?;
+        Ok((
+            RewardResponse::new(amount, era_id, delegation_rate, switch_block_hash),
+            remainder,
+        ))
+    }
+}
+
 /// Describes the consensus status.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct ConsensusStatus {
     validator_public_key: PublicKey,
     round_length: Option<TimeDiff>,
@@ -229,7 +313,7 @@ impl FromBytes for ConsensusStatus {
 }
 
 /// A transaction with execution info.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct TransactionWithExecutionInfo {
     transaction: Transaction,
     execution_info: Option<ExecutionInfo>,
@@ -378,6 +462,17 @@ mod tests {
     fn get_trie_full_result_roundtrip() {
         let rng = &mut TestRng::new();
         bytesrepr::test_serialization_roundtrip(&GetTrieFullResult::new(rng.gen()));
+    }
+
+    #[test]
+    fn reward_roundtrip() {
+        let rng = &mut TestRng::new();
+        bytesrepr::test_serialization_roundtrip(&RewardResponse::new(
+            rng.gen(),
+            EraId::random(rng),
+            rng.gen(),
+            BlockHash::random(rng),
+        ));
     }
 
     #[test]

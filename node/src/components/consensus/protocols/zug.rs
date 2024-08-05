@@ -79,7 +79,7 @@ use datasize::DataSize;
 use either::Either;
 use itertools::Itertools;
 use rand::{seq::IteratorRandom, Rng};
-use tracing::{debug, error, event, info, warn, Level};
+use tracing::{debug, error, event, info, trace, warn, Level};
 
 use casper_types::{Chainspec, TimeDiff, Timestamp, U512};
 
@@ -313,7 +313,7 @@ impl<C: Context + 'static> Zug<C> {
             core_config.minimum_block_time,
             era_start_time,
             core_config.minimum_era_height,
-            era_start_time + core_config.era_duration,
+            era_start_time.saturating_add(core_config.era_duration),
             protocols::common::ftt::<C>(core_config.finality_threshold_fraction, &validators),
         );
 
@@ -444,7 +444,7 @@ impl<C: Context + 'static> Zug<C> {
         if self.evidence_only || self.finalized_switch_block() {
             return vec![]; // Era has ended. No further progress is expected.
         }
-        debug!(
+        trace!(
             our_idx = self.our_idx(),
             instance_id = ?self.instance_id(),
             "syncing with random peer",
@@ -461,7 +461,7 @@ impl<C: Context + 'static> Zug<C> {
         // Periodically sync the state with a random peer.
         if let Some(interval) = self.config.sync_state_interval {
             outcomes.push(ProtocolOutcome::ScheduleTimer(
-                now + interval,
+                now.saturating_add(interval),
                 TIMER_ID_SYNC_PEER,
             ));
         }
@@ -1226,7 +1226,7 @@ impl<C: Context + 'static> Zug<C> {
             }
         }
 
-        if proposal.timestamp > now + self.config.clock_tolerance {
+        if proposal.timestamp > now.saturating_add(self.config.clock_tolerance) {
             log_proposal!(
                 Level::TRACE,
                 proposal,
@@ -1298,9 +1298,9 @@ impl<C: Context + 'static> Zug<C> {
                 );
                 self.proposals_waiting_for_parent
                     .entry(parent_round_id)
-                    .or_insert_with(HashMap::new)
+                    .or_default()
                     .entry(hashed_prop)
-                    .or_insert_with(HashSet::new)
+                    .or_default()
                     .insert((round_id, sender));
                 return Ok(vec![]);
             }
@@ -1481,7 +1481,7 @@ impl<C: Context + 'static> Zug<C> {
                             | ProtocolOutcome::CreatedRequestToRandomPeer(_)
                             | ProtocolOutcome::ScheduleTimer(_, _)
                             | ProtocolOutcome::QueueAction(_)
-                            | ProtocolOutcome::CreateNewBlock(_)
+                            | ProtocolOutcome::CreateNewBlock(_, _)
                             | ProtocolOutcome::DoppelgangerDetected
                             | ProtocolOutcome::Disconnect(_)
                             | ProtocolOutcome::SignMessage(_) => false,
@@ -1943,7 +1943,10 @@ impl<C: Context + 'static> Zug<C> {
             self.current_round,
             maybe_parent_round_id,
         ));
-        vec![ProtocolOutcome::CreateNewBlock(block_context)]
+        vec![ProtocolOutcome::CreateNewBlock(
+            block_context,
+            now.saturating_add(TimeDiff::from_millis(self.proposal_timeout_millis as u64)),
+        )]
     }
 
     /// Creates a new proposal message in the current round, and a corresponding signed echo,
@@ -2040,7 +2043,7 @@ impl<C: Context + 'static> Zug<C> {
         }
         for vidx in vidxs {
             if !self.faults.contains_key(&vidx) {
-                sum += self.validators.weight(vidx);
+                sum = sum.saturating_add(self.validators.weight(vidx));
                 if sum > quorum_threshold {
                     return true;
                 }
@@ -2224,7 +2227,10 @@ where
                 self.log_participation();
                 match self.config.log_participation_interval {
                     Some(interval) if !self.evidence_only && !self.finalized_switch_block() => {
-                        vec![ProtocolOutcome::ScheduleTimer(now + interval, timer_id)]
+                        vec![ProtocolOutcome::ScheduleTimer(
+                            now.saturating_add(interval),
+                            timer_id,
+                        )]
                     }
                     _ => vec![],
                 }
@@ -2247,13 +2253,15 @@ where
         let mut outcomes = vec![];
         if let Some(interval) = self.config.sync_state_interval {
             outcomes.push(ProtocolOutcome::ScheduleTimer(
-                now.max(self.params.start_timestamp()) + interval,
+                now.max(self.params.start_timestamp())
+                    .saturating_add(interval),
                 TIMER_ID_SYNC_PEER,
             ));
         }
         if let Some(interval) = self.config.log_participation_interval {
             outcomes.push(ProtocolOutcome::ScheduleTimer(
-                now.max(self.params.start_timestamp()) + interval,
+                now.max(self.params.start_timestamp())
+                    .saturating_add(interval),
                 TIMER_ID_LOG_PARTICIPATION,
             ));
         }

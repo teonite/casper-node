@@ -192,7 +192,8 @@ impl IndexedLmdbBlockStore {
                                 .map(TransactionHash::from),
                         ),
                         Some(BlockBody::V2(v2_body)) => {
-                            deleted_transaction_hashes.extend(v2_body.all_transactions().copied())
+                            let transactions = v2_body.all_transactions();
+                            deleted_transaction_hashes.extend(transactions)
                         }
                         None => (),
                     }
@@ -336,6 +337,7 @@ fn initialize_execution_result_dbs(
     info!("execution result databases initialized");
     Ok(())
 }
+
 pub struct IndexedLmdbBlockStoreRWTransaction<'t> {
     txn: RwTransaction<'t>,
     block_store: &'t LmdbBlockStore,
@@ -599,7 +601,7 @@ impl<'t> DataReader<BlockHash, Block> for IndexedLmdbBlockStoreReadTransaction<'
             .get_single_block(&self.txn, &key)
     }
 
-    fn exists(&mut self, key: BlockHash) -> Result<bool, BlockStoreError> {
+    fn exists(&self, key: BlockHash) -> Result<bool, BlockStoreError> {
         self.block_store.block_store.block_exists(&self.txn, &key)
     }
 }
@@ -611,7 +613,7 @@ impl<'t> DataReader<BlockHash, BlockHeader> for IndexedLmdbBlockStoreReadTransac
             .get_single_block_header(&self.txn, &key)
     }
 
-    fn exists(&mut self, key: BlockHash) -> Result<bool, BlockStoreError> {
+    fn exists(&self, key: BlockHash) -> Result<bool, BlockStoreError> {
         self.block_store
             .block_store
             .block_header_exists(&self.txn, &key)
@@ -625,7 +627,7 @@ impl<'t> DataReader<BlockHash, ApprovalsHashes> for IndexedLmdbBlockStoreReadTra
             .read_approvals_hashes(&self.txn, &key)
     }
 
-    fn exists(&mut self, key: BlockHash) -> Result<bool, BlockStoreError> {
+    fn exists(&self, key: BlockHash) -> Result<bool, BlockStoreError> {
         self.block_store
             .block_store
             .block_header_exists(&self.txn, &key)
@@ -639,7 +641,7 @@ impl<'t> DataReader<BlockHash, BlockSignatures> for IndexedLmdbBlockStoreReadTra
             .get_block_signatures(&self.txn, &key)
     }
 
-    fn exists(&mut self, key: BlockHash) -> Result<bool, BlockStoreError> {
+    fn exists(&self, key: BlockHash) -> Result<bool, BlockStoreError> {
         self.block_store
             .block_store
             .block_signatures_exist(&self.txn, &key)
@@ -651,7 +653,7 @@ impl<'t> DataReader<BlockHeight, Block> for IndexedLmdbBlockStoreReadTransaction
         self.read_block_indexed(LmdbBlockStoreIndex::BlockHeight(IndexPosition::Key(key)))
     }
 
-    fn exists(&mut self, key: BlockHeight) -> Result<bool, BlockStoreError> {
+    fn exists(&self, key: BlockHeight) -> Result<bool, BlockStoreError> {
         self.contains_data_indexed(
             LmdbBlockStoreIndex::BlockHeight(IndexPosition::Key(key)),
             DataType::Block,
@@ -664,7 +666,7 @@ impl<'t> DataReader<BlockHeight, BlockHeader> for IndexedLmdbBlockStoreReadTrans
         self.read_block_header_indexed(LmdbBlockStoreIndex::BlockHeight(IndexPosition::Key(key)))
     }
 
-    fn exists(&mut self, key: BlockHeight) -> Result<bool, BlockStoreError> {
+    fn exists(&self, key: BlockHeight) -> Result<bool, BlockStoreError> {
         self.contains_data_indexed(
             LmdbBlockStoreIndex::BlockHeight(IndexPosition::Key(key)),
             DataType::BlockHeader,
@@ -679,7 +681,7 @@ impl<'t> DataReader<BlockHeight, ApprovalsHashes> for IndexedLmdbBlockStoreReadT
         )))
     }
 
-    fn exists(&mut self, key: BlockHeight) -> Result<bool, BlockStoreError> {
+    fn exists(&self, key: BlockHeight) -> Result<bool, BlockStoreError> {
         self.contains_data_indexed(
             LmdbBlockStoreIndex::BlockHeight(IndexPosition::Key(key)),
             DataType::ApprovalsHashes,
@@ -694,7 +696,7 @@ impl<'t> DataReader<BlockHeight, BlockSignatures> for IndexedLmdbBlockStoreReadT
         )))
     }
 
-    fn exists(&mut self, key: BlockHeight) -> Result<bool, BlockStoreError> {
+    fn exists(&self, key: BlockHeight) -> Result<bool, BlockStoreError> {
         self.contains_data_indexed(
             LmdbBlockStoreIndex::BlockHeight(IndexPosition::Key(key)),
             DataType::BlockSignatures,
@@ -710,7 +712,7 @@ impl<'t> DataReader<EraId, Block> for IndexedLmdbBlockStoreReadTransaction<'t> {
         )))
     }
 
-    fn exists(&mut self, key: EraId) -> Result<bool, BlockStoreError> {
+    fn exists(&self, key: EraId) -> Result<bool, BlockStoreError> {
         self.contains_data_indexed(
             LmdbBlockStoreIndex::SwitchBlockEraId(IndexPosition::Key(key)),
             DataType::Block,
@@ -727,7 +729,7 @@ impl<'t> DataReader<EraId, BlockHeader> for IndexedLmdbBlockStoreReadTransaction
         )))
     }
 
-    fn exists(&mut self, key: EraId) -> Result<bool, BlockStoreError> {
+    fn exists(&self, key: EraId) -> Result<bool, BlockStoreError> {
         self.contains_data_indexed(
             LmdbBlockStoreIndex::SwitchBlockEraId(IndexPosition::Key(key)),
             DataType::BlockHeader,
@@ -742,7 +744,7 @@ impl<'t> DataReader<EraId, ApprovalsHashes> for IndexedLmdbBlockStoreReadTransac
         ))
     }
 
-    fn exists(&mut self, key: EraId) -> Result<bool, BlockStoreError> {
+    fn exists(&self, key: EraId) -> Result<bool, BlockStoreError> {
         self.contains_data_indexed(
             LmdbBlockStoreIndex::SwitchBlockEraId(IndexPosition::Key(key)),
             DataType::ApprovalsHashes,
@@ -757,7 +759,7 @@ impl<'t> DataReader<EraId, BlockSignatures> for IndexedLmdbBlockStoreReadTransac
         ))
     }
 
-    fn exists(&mut self, key: EraId) -> Result<bool, BlockStoreError> {
+    fn exists(&self, key: EraId) -> Result<bool, BlockStoreError> {
         self.contains_data_indexed(
             LmdbBlockStoreIndex::SwitchBlockEraId(IndexPosition::Key(key)),
             DataType::BlockSignatures,
@@ -770,7 +772,7 @@ impl<'t> DataReader<Tip, BlockHeader> for IndexedLmdbBlockStoreReadTransaction<'
         self.read_block_header_indexed(LmdbBlockStoreIndex::BlockHeight(IndexPosition::Tip))
     }
 
-    fn exists(&mut self, _key: Tip) -> Result<bool, BlockStoreError> {
+    fn exists(&self, _key: Tip) -> Result<bool, BlockStoreError> {
         self.contains_data_indexed(
             LmdbBlockStoreIndex::BlockHeight(IndexPosition::Tip),
             DataType::BlockHeader,
@@ -783,7 +785,7 @@ impl<'t> DataReader<Tip, Block> for IndexedLmdbBlockStoreReadTransaction<'t> {
         self.read_block_indexed(LmdbBlockStoreIndex::BlockHeight(IndexPosition::Tip))
     }
 
-    fn exists(&mut self, _key: Tip) -> Result<bool, BlockStoreError> {
+    fn exists(&self, _key: Tip) -> Result<bool, BlockStoreError> {
         self.contains_data_indexed(
             LmdbBlockStoreIndex::BlockHeight(IndexPosition::Tip),
             DataType::Block,
@@ -796,7 +798,7 @@ impl<'t> DataReader<LatestSwitchBlock, BlockHeader> for IndexedLmdbBlockStoreRea
         self.read_block_header_indexed(LmdbBlockStoreIndex::SwitchBlockEraId(IndexPosition::Tip))
     }
 
-    fn exists(&mut self, _key: LatestSwitchBlock) -> Result<bool, BlockStoreError> {
+    fn exists(&self, _key: LatestSwitchBlock) -> Result<bool, BlockStoreError> {
         self.contains_data_indexed(
             LmdbBlockStoreIndex::SwitchBlockEraId(IndexPosition::Tip),
             DataType::BlockHeader,
@@ -811,7 +813,7 @@ impl<'t> DataReader<TransactionHash, BlockHashHeightAndEra>
         Ok(self.block_store.transaction_hash_index.get(&key).copied())
     }
 
-    fn exists(&mut self, key: TransactionHash) -> Result<bool, BlockStoreError> {
+    fn exists(&self, key: TransactionHash) -> Result<bool, BlockStoreError> {
         Ok(self.block_store.transaction_hash_index.contains_key(&key))
     }
 }
@@ -825,7 +827,7 @@ impl<'t> DataReader<TransactionHash, Transaction> for IndexedLmdbBlockStoreReadT
             .map_err(|err| BlockStoreError::InternalStorage(Box::new(err)))
     }
 
-    fn exists(&mut self, key: TransactionHash) -> Result<bool, BlockStoreError> {
+    fn exists(&self, key: TransactionHash) -> Result<bool, BlockStoreError> {
         self.block_store
             .block_store
             .transaction_exists(&self.txn, &key)
@@ -843,7 +845,7 @@ impl<'t> DataReader<TransactionHash, BTreeSet<Approval>>
             .map_err(|err| BlockStoreError::InternalStorage(Box::new(err)))
     }
 
-    fn exists(&mut self, key: TransactionHash) -> Result<bool, BlockStoreError> {
+    fn exists(&self, key: TransactionHash) -> Result<bool, BlockStoreError> {
         self.block_store
             .block_store
             .finalized_transaction_approvals_dbs
@@ -861,7 +863,7 @@ impl<'t> DataReader<TransactionHash, ExecutionResult> for IndexedLmdbBlockStoreR
             .map_err(|err| BlockStoreError::InternalStorage(Box::new(err)))
     }
 
-    fn exists(&mut self, key: TransactionHash) -> Result<bool, BlockStoreError> {
+    fn exists(&self, key: TransactionHash) -> Result<bool, BlockStoreError> {
         self.block_store
             .block_store
             .execution_result_dbs
@@ -877,7 +879,7 @@ impl<'t> DataReader<StateStoreKey, Vec<u8>> for IndexedLmdbBlockStoreReadTransac
             .read_state_store(&self.txn, &key)
     }
 
-    fn exists(&mut self, StateStoreKey(key): StateStoreKey) -> Result<bool, BlockStoreError> {
+    fn exists(&self, StateStoreKey(key): StateStoreKey) -> Result<bool, BlockStoreError> {
         self.block_store
             .block_store
             .state_store_key_exists(&self.txn, &key)
@@ -907,7 +909,7 @@ impl<'t> DataReader<(DbTableId, Vec<u8>), DbRawBytesSpec>
         res.map_err(|err| BlockStoreError::InternalStorage(Box::new(err)))
     }
 
-    fn exists(&mut self, key: (DbTableId, Vec<u8>)) -> Result<bool, BlockStoreError> {
+    fn exists(&self, key: (DbTableId, Vec<u8>)) -> Result<bool, BlockStoreError> {
         self.read(key).map(|res| res.is_some())
     }
 }
@@ -1164,7 +1166,7 @@ impl<'t> DataReader<TransactionHash, Transaction> for IndexedLmdbBlockStoreRWTra
             .map_err(|err| BlockStoreError::InternalStorage(Box::new(err)))
     }
 
-    fn exists(&mut self, query: TransactionHash) -> Result<bool, BlockStoreError> {
+    fn exists(&self, query: TransactionHash) -> Result<bool, BlockStoreError> {
         self.block_store.transaction_exists(&self.txn, &query)
     }
 }
@@ -1174,7 +1176,7 @@ impl<'t> DataReader<BlockHash, BlockSignatures> for IndexedLmdbBlockStoreRWTrans
         self.block_store.get_block_signatures(&self.txn, &key)
     }
 
-    fn exists(&mut self, key: BlockHash) -> Result<bool, BlockStoreError> {
+    fn exists(&self, key: BlockHash) -> Result<bool, BlockStoreError> {
         self.block_store.block_signatures_exist(&self.txn, &key)
     }
 }
@@ -1189,7 +1191,7 @@ impl<'t> DataReader<TransactionHash, BTreeSet<Approval>>
             .map_err(|err| BlockStoreError::InternalStorage(Box::new(err)))
     }
 
-    fn exists(&mut self, query: TransactionHash) -> Result<bool, BlockStoreError> {
+    fn exists(&self, query: TransactionHash) -> Result<bool, BlockStoreError> {
         self.block_store
             .finalized_transaction_approvals_dbs
             .exists(&self.txn, &query)
@@ -1202,8 +1204,18 @@ impl<'t> DataReader<BlockHash, Block> for IndexedLmdbBlockStoreRWTransaction<'t>
         self.block_store.get_single_block(&self.txn, &key)
     }
 
-    fn exists(&mut self, key: BlockHash) -> Result<bool, BlockStoreError> {
+    fn exists(&self, key: BlockHash) -> Result<bool, BlockStoreError> {
         self.block_store.block_exists(&self.txn, &key)
+    }
+}
+
+impl<'t> DataReader<BlockHash, BlockHeader> for IndexedLmdbBlockStoreRWTransaction<'t> {
+    fn read(&self, key: BlockHash) -> Result<Option<BlockHeader>, BlockStoreError> {
+        self.block_store.get_single_block_header(&self.txn, &key)
+    }
+
+    fn exists(&self, key: BlockHash) -> Result<bool, BlockStoreError> {
+        self.block_store.block_header_exists(&self.txn, &key)
     }
 }
 
@@ -1215,7 +1227,7 @@ impl<'t> DataReader<TransactionHash, ExecutionResult> for IndexedLmdbBlockStoreR
             .map_err(|err| BlockStoreError::InternalStorage(Box::new(err)))
     }
 
-    fn exists(&mut self, query: TransactionHash) -> Result<bool, BlockStoreError> {
+    fn exists(&self, query: TransactionHash) -> Result<bool, BlockStoreError> {
         self.block_store
             .execution_result_dbs
             .exists(&self.txn, &query)
@@ -1228,7 +1240,7 @@ impl<'t> DataReader<BlockHash, Vec<Transfer>> for IndexedLmdbBlockStoreRWTransac
         self.block_store.get_transfers(&self.txn, &key)
     }
 
-    fn exists(&mut self, key: BlockHash) -> Result<bool, BlockStoreError> {
+    fn exists(&self, key: BlockHash) -> Result<bool, BlockStoreError> {
         self.block_store.has_transfers(&self.txn, &key)
     }
 }

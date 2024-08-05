@@ -3,12 +3,12 @@ use core::convert::TryFrom;
 #[cfg(test)]
 use rand::Rng;
 
-use crate::get_request::GetRequest;
+use crate::{get_request::GetRequest, EraIdentifier};
 #[cfg(test)]
 use casper_types::testing::TestRng;
 use casper_types::{
     bytesrepr::{self, FromBytes, ToBytes},
-    BlockIdentifier, TransactionHash,
+    BlockIdentifier, PublicKey, TransactionHash,
 };
 
 /// Request for information from the node.
@@ -51,6 +51,19 @@ pub enum InformationRequest {
     NodeStatus,
     /// Returns the latest switch block header.
     LatestSwitchBlockHeader,
+    /// Returns the reward for a validator or a delegator in a specific era.
+    Reward {
+        /// Identifier of the era to get the reward for. Must point to either a switch block or
+        /// a valid `EraId`. If `None`, the reward for the latest switch block is returned.
+        era_identifier: Option<EraIdentifier>,
+        /// Public key of the validator to get the reward for.
+        validator: Box<PublicKey>,
+        /// Public key of the delegator to get the reward for.
+        /// If `None`, the reward for the validator is returned.
+        delegator: Option<Box<PublicKey>>,
+    },
+    /// Returns the current Casper protocol version.
+    ProtocolVersion,
 }
 
 impl InformationRequest {
@@ -79,26 +92,20 @@ impl InformationRequest {
             InformationRequest::LatestSwitchBlockHeader => {
                 InformationRequestTag::LatestSwitchBlockHeader
             }
+            InformationRequest::Reward { .. } => InformationRequestTag::Reward,
+            InformationRequest::ProtocolVersion => InformationRequestTag::ProtocolVersion,
         }
     }
 
     #[cfg(test)]
     pub(crate) fn random(rng: &mut TestRng) -> Self {
         match InformationRequestTag::random(rng) {
-            InformationRequestTag::BlockHeader => {
-                if rng.gen() {
-                    InformationRequest::BlockHeader(None)
-                } else {
-                    InformationRequest::BlockHeader(Some(BlockIdentifier::random(rng)))
-                }
-            }
-            InformationRequestTag::SignedBlock => {
-                if rng.gen() {
-                    InformationRequest::SignedBlock(None)
-                } else {
-                    InformationRequest::SignedBlock(Some(BlockIdentifier::random(rng)))
-                }
-            }
+            InformationRequestTag::BlockHeader => InformationRequest::BlockHeader(
+                rng.gen::<bool>().then(|| BlockIdentifier::random(rng)),
+            ),
+            InformationRequestTag::SignedBlock => InformationRequest::SignedBlock(
+                rng.gen::<bool>().then(|| BlockIdentifier::random(rng)),
+            ),
             InformationRequestTag::Transaction => InformationRequest::Transaction {
                 hash: TransactionHash::random(rng),
                 with_finalized_approvals: rng.gen(),
@@ -122,6 +129,12 @@ impl InformationRequest {
             InformationRequestTag::LatestSwitchBlockHeader => {
                 InformationRequest::LatestSwitchBlockHeader
             }
+            InformationRequestTag::Reward => InformationRequest::Reward {
+                era_identifier: rng.gen::<bool>().then(|| EraIdentifier::random(rng)),
+                validator: PublicKey::random(rng).into(),
+                delegator: rng.gen::<bool>().then(|| PublicKey::random(rng).into()),
+            },
+            InformationRequestTag::ProtocolVersion => InformationRequest::ProtocolVersion,
         }
     }
 }
@@ -160,7 +173,18 @@ impl ToBytes for InformationRequest {
             | InformationRequest::ConsensusStatus
             | InformationRequest::ChainspecRawBytes
             | InformationRequest::NodeStatus
-            | InformationRequest::LatestSwitchBlockHeader => Ok(()),
+            | InformationRequest::LatestSwitchBlockHeader
+            | InformationRequest::ProtocolVersion => Ok(()),
+            InformationRequest::Reward {
+                era_identifier,
+                validator,
+                delegator,
+            } => {
+                era_identifier.write_bytes(writer)?;
+                validator.write_bytes(writer)?;
+                delegator.as_deref().write_bytes(writer)?;
+                Ok(())
+            }
         }
     }
 
@@ -188,7 +212,17 @@ impl ToBytes for InformationRequest {
             | InformationRequest::ConsensusStatus
             | InformationRequest::ChainspecRawBytes
             | InformationRequest::NodeStatus
-            | InformationRequest::LatestSwitchBlockHeader => 0,
+            | InformationRequest::LatestSwitchBlockHeader
+            | InformationRequest::ProtocolVersion => 0,
+            InformationRequest::Reward {
+                era_identifier,
+                validator,
+                delegator,
+            } => {
+                era_identifier.serialized_length()
+                    + validator.serialized_length()
+                    + delegator.as_deref().serialized_length()
+            }
         }
     }
 }
@@ -241,6 +275,22 @@ impl TryFrom<(InformationRequestTag, &[u8])> for InformationRequest {
             InformationRequestTag::NodeStatus => (InformationRequest::NodeStatus, key_bytes),
             InformationRequestTag::LatestSwitchBlockHeader => {
                 (InformationRequest::LatestSwitchBlockHeader, key_bytes)
+            }
+            InformationRequestTag::Reward => {
+                let (era_identifier, remainder) = <Option<EraIdentifier>>::from_bytes(key_bytes)?;
+                let (validator, remainder) = PublicKey::from_bytes(remainder)?;
+                let (delegator, remainder) = <Option<PublicKey>>::from_bytes(remainder)?;
+                (
+                    InformationRequest::Reward {
+                        era_identifier,
+                        validator: Box::new(validator),
+                        delegator: delegator.map(Box::new),
+                    },
+                    remainder,
+                )
+            }
+            InformationRequestTag::ProtocolVersion => {
+                (InformationRequest::ProtocolVersion, key_bytes)
             }
         };
         if !remainder.is_empty() {
@@ -297,12 +347,16 @@ pub enum InformationRequestTag {
     NodeStatus = 14,
     /// Latest switch block header request.
     LatestSwitchBlockHeader = 15,
+    /// Reward for a validator or a delegator in a specific era.
+    Reward = 16,
+    /// Protocol version request.
+    ProtocolVersion = 17,
 }
 
 impl InformationRequestTag {
     #[cfg(test)]
     pub(crate) fn random(rng: &mut TestRng) -> Self {
-        match rng.gen_range(0..16) {
+        match rng.gen_range(0..18) {
             0 => InformationRequestTag::BlockHeader,
             1 => InformationRequestTag::SignedBlock,
             2 => InformationRequestTag::Transaction,
@@ -319,6 +373,8 @@ impl InformationRequestTag {
             13 => InformationRequestTag::ChainspecRawBytes,
             14 => InformationRequestTag::NodeStatus,
             15 => InformationRequestTag::LatestSwitchBlockHeader,
+            16 => InformationRequestTag::Reward,
+            17 => InformationRequestTag::ProtocolVersion,
             _ => unreachable!(),
         }
     }
@@ -345,6 +401,8 @@ impl TryFrom<u16> for InformationRequestTag {
             13 => Ok(InformationRequestTag::ChainspecRawBytes),
             14 => Ok(InformationRequestTag::NodeStatus),
             15 => Ok(InformationRequestTag::LatestSwitchBlockHeader),
+            16 => Ok(InformationRequestTag::Reward),
+            17 => Ok(InformationRequestTag::ProtocolVersion),
             _ => Err(UnknownInformationRequestTag(value)),
         }
     }

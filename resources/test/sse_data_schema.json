@@ -630,6 +630,7 @@
         "era_id",
         "height",
         "parent_hash",
+        "proposer",
         "protocol_version",
         "random_bit",
         "state_root_hash",
@@ -713,11 +714,30 @@
             }
           ]
         },
+        "proposer": {
+          "description": "The public key of the validator which proposed the block.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/PublicKey"
+            }
+          ]
+        },
         "current_gas_price": {
           "description": "The gas price of the era",
           "type": "integer",
           "format": "uint8",
           "minimum": 0.0
+        },
+        "last_switch_block_hash": {
+          "description": "The most recent switch block hash.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/BlockHash"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -758,7 +778,10 @@
           "description": "The rewards distributed to the validators.",
           "type": "object",
           "additionalProperties": {
-            "$ref": "#/definitions/U512"
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/U512"
+            }
           }
         },
         "next_era_gas_price": {
@@ -772,48 +795,18 @@
       "description": "The body portion of a block. Version 2.",
       "type": "object",
       "required": [
-        "auction",
-        "install_upgrade",
-        "mint",
-        "proposer",
         "rewarded_signatures",
-        "standard"
+        "transactions"
       ],
       "properties": {
-        "proposer": {
-          "description": "The public key of the validator which proposed the block.",
-          "allOf": [
-            {
-              "$ref": "#/definitions/PublicKey"
+        "transactions": {
+          "description": "Map of transactions mapping categories to a list of transaction hashes.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/TransactionHash"
             }
-          ]
-        },
-        "mint": {
-          "description": "The hashes of the mint transactions within the block.",
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/TransactionHash"
-          }
-        },
-        "auction": {
-          "description": "The hashes of the auction transactions within the block.",
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/TransactionHash"
-          }
-        },
-        "install_upgrade": {
-          "description": "The hashes of the installer/upgrader transactions within the block.",
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/TransactionHash"
-          }
-        },
-        "standard": {
-          "description": "The hashes of all other transactions within the block.",
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/TransactionHash"
           }
         },
         "rewarded_signatures": {
@@ -1665,7 +1658,7 @@
           "additionalProperties": false
         },
         {
-          "description": "The cost of the transaction is determined by the cost table, per the transaction kind.",
+          "description": "The cost of the transaction is determined by the cost table, per the transaction category.",
           "type": "object",
           "required": [
             "Fixed"
@@ -1760,7 +1753,8 @@
         "args",
         "entry_point",
         "scheduling",
-        "target"
+        "target",
+        "transaction_category"
       ],
       "properties": {
         "args": {
@@ -1771,6 +1765,11 @@
         },
         "entry_point": {
           "$ref": "#/definitions/TransactionEntryPoint"
+        },
+        "transaction_category": {
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0.0
         },
         "scheduling": {
           "$ref": "#/definitions/TransactionScheduling"
@@ -1834,19 +1833,10 @@
             "Session": {
               "type": "object",
               "required": [
-                "kind",
                 "module_bytes",
                 "runtime"
               ],
               "properties": {
-                "kind": {
-                  "description": "The kind of session.",
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/TransactionSessionKind"
-                    }
-                  ]
-                },
                 "module_bytes": {
                   "description": "The compiled Wasm.",
                   "allOf": [
@@ -1975,38 +1965,12 @@
           "enum": [
             "VmCasperV1"
           ]
-        }
-      ]
-    },
-    "TransactionSessionKind": {
-      "description": "Session kind of a Transaction.",
-      "oneOf": [
-        {
-          "description": "A standard (non-special-case) session.\n\nThis kind of session is not allowed to install or upgrade a stored contract, but can call stored contracts.",
-          "type": "string",
-          "enum": [
-            "Standard"
-          ]
         },
         {
-          "description": "A session which installs a stored contract.",
+          "description": "The Casper Version 2 Virtual Machine.",
           "type": "string",
           "enum": [
-            "Installer"
-          ]
-        },
-        {
-          "description": "A session which upgrades a previously-installed stored contract.  Such a session must have \"package_id: PackageIdentifier\" runtime arg present.",
-          "type": "string",
-          "enum": [
-            "Upgrader"
-          ]
-        },
-        {
-          "description": "A session which doesn't call any stored contracts.\n\nThis kind of session is not allowed to install or upgrade a stored contract.",
-          "type": "string",
-          "enum": [
-            "Isolated"
+            "VmCasperV2"
           ]
         }
       ]
@@ -2014,6 +1978,13 @@
     "TransactionEntryPoint": {
       "description": "Entry point of a Transaction.",
       "oneOf": [
+        {
+          "description": "The standard `call` entry point used in session code.",
+          "type": "string",
+          "enum": [
+            "Call"
+          ]
+        },
         {
           "description": "A non-native, arbitrary entry point.",
           "type": "object",
@@ -2074,6 +2045,13 @@
           "type": "string",
           "enum": [
             "ActivateBid"
+          ]
+        },
+        {
+          "description": "The `change_bid_public_key` native entry point, used to change a bid's public key.",
+          "type": "string",
+          "enum": [
+            "ChangeBidPublicKey"
           ]
         }
       ]
@@ -3230,6 +3208,32 @@
             }
           },
           "additionalProperties": false
+        },
+        {
+          "description": "A bridge record pointing to a new `ValidatorBid` after the public key was changed.",
+          "type": "object",
+          "required": [
+            "Bridge"
+          ],
+          "properties": {
+            "Bridge": {
+              "$ref": "#/definitions/Bridge"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "Credited amount.",
+          "type": "object",
+          "required": [
+            "Credit"
+          ],
+          "properties": {
+            "Credit": {
+              "$ref": "#/definitions/ValidatorCredit"
+            }
+          },
+          "additionalProperties": false
         }
       ]
     },
@@ -3240,6 +3244,8 @@
         "bonding_purse",
         "delegation_rate",
         "inactive",
+        "maximum_delegation_amount",
+        "minimum_delegation_amount",
         "staked_amount",
         "validator_public_key"
       ],
@@ -3288,6 +3294,90 @@
         "inactive": {
           "description": "`true` if validator has been \"evicted\"",
           "type": "boolean"
+        },
+        "minimum_delegation_amount": {
+          "description": "Minimum allowed delegation amount in motes",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "maximum_delegation_amount": {
+          "description": "Maximum allowed delegation amount in motes",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "Bridge": {
+      "description": "A bridge record pointing to a new `ValidatorBid` after the public key was changed.",
+      "type": "object",
+      "required": [
+        "era_id",
+        "new_validator_public_key",
+        "old_validator_public_key"
+      ],
+      "properties": {
+        "old_validator_public_key": {
+          "description": "Previous validator public key associated with the bid.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/PublicKey"
+            }
+          ]
+        },
+        "new_validator_public_key": {
+          "description": "New validator public key associated with the bid.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/PublicKey"
+            }
+          ]
+        },
+        "era_id": {
+          "description": "Era when bridge record was created.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/EraId"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ValidatorCredit": {
+      "description": "Validator credit record.",
+      "type": "object",
+      "required": [
+        "amount",
+        "era_id",
+        "validator_public_key"
+      ],
+      "properties": {
+        "validator_public_key": {
+          "description": "Validator public key",
+          "allOf": [
+            {
+              "$ref": "#/definitions/PublicKey"
+            }
+          ]
+        },
+        "era_id": {
+          "description": "The era id the credit was created.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/EraId"
+            }
+          ]
+        },
+        "amount": {
+          "description": "The credit amount.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/U512"
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -3302,6 +3392,7 @@
         "initiator",
         "limit",
         "payment",
+        "size_estimate",
         "transfers"
       ],
       "properties": {
@@ -3357,6 +3448,12 @@
           "items": {
             "$ref": "#/definitions/Transfer"
           }
+        },
+        "size_estimate": {
+          "description": "The size estimate of the transaction",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
         },
         "effects": {
           "description": "The effects of executing this transaction.",
@@ -3919,6 +4016,19 @@
             }
           },
           "additionalProperties": false
+        },
+        {
+          "description": "An entrypoint record.",
+          "type": "object",
+          "required": [
+            "EntryPoint"
+          ],
+          "properties": {
+            "EntryPoint": {
+              "$ref": "#/definitions/EntryPointValue"
+            }
+          },
+          "additionalProperties": false
         }
       ]
     },
@@ -4236,11 +4346,10 @@
         },
         "versions": {
           "description": "All versions (enabled & disabled)",
-          "allOf": [
-            {
-              "$ref": "#/definitions/Array_of_ContractVersionAndHash"
-            }
-          ]
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ContractVersion"
+          }
         },
         "disabled_versions": {
           "description": "Disabled versions",
@@ -4268,34 +4377,32 @@
         }
       }
     },
-    "Array_of_ContractVersionAndHash": {
-      "type": "array",
-      "items": {
-        "$ref": "#/definitions/ContractVersionAndHash"
-      }
-    },
-    "ContractVersionAndHash": {
+    "ContractVersion": {
       "type": "object",
       "required": [
-        "contract_entity_hash",
-        "contract_version_key"
+        "contract_hash",
+        "contract_version",
+        "protocol_version_major"
       ],
       "properties": {
-        "contract_version_key": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/ContractVersionKey"
-            }
-          ]
+        "protocol_version_major": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
         },
-        "contract_entity_hash": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/ContractHash"
-            }
-          ]
+        "contract_version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "contract_hash": {
+          "$ref": "#/definitions/ContractHash"
         }
       }
+    },
+    "ContractHash": {
+      "description": "The hash address of the contract",
+      "type": "string"
     },
     "ContractVersionKey": {
       "description": "Major element of `ProtocolVersion` combined with `ContractVersion`.",
@@ -4314,10 +4421,6 @@
       ],
       "maxItems": 2,
       "minItems": 2
-    },
-    "ContractHash": {
-      "description": "The hash address of the contract",
-      "type": "string"
     },
     "Array_of_NamedUserGroup": {
       "type": "array",
@@ -4375,7 +4478,6 @@
         "associated_keys",
         "byte_code_hash",
         "entity_kind",
-        "entry_points",
         "main_purse",
         "message_topics",
         "package_hash",
@@ -4396,9 +4498,6 @@
         },
         "main_purse": {
           "$ref": "#/definitions/URef"
-        },
-        "entry_points": {
-          "$ref": "#/definitions/Array_of_NamedEntryPoint"
         },
         "associated_keys": {
           "$ref": "#/definitions/EntityAssociatedKeys"
@@ -4442,10 +4541,16 @@
         },
         {
           "description": "Packages associated with Wasm stored on chain.",
-          "type": "string",
-          "enum": [
+          "type": "object",
+          "required": [
             "SmartContract"
-          ]
+          ],
+          "properties": {
+            "SmartContract": {
+              "$ref": "#/definitions/TransactionRuntime"
+            }
+          },
+          "additionalProperties": false
         }
       ]
     },
@@ -4568,21 +4673,12 @@
       "description": "Entity definition, metadata, and security container.",
       "type": "object",
       "required": [
-        "access_key",
         "disabled_versions",
         "groups",
         "lock_status",
         "versions"
       ],
       "properties": {
-        "access_key": {
-          "description": "Key used to add or disable versions.",
-          "allOf": [
-            {
-              "$ref": "#/definitions/URef"
-            }
-          ]
-        },
         "versions": {
           "description": "All versions (enabled & disabled).",
           "allOf": [
@@ -4801,6 +4897,120 @@
         },
         "reservation_data": {
           "$ref": "#/definitions/Bytes"
+        }
+      }
+    },
+    "EntryPointValue": {
+      "description": "The encaspulated representation of entrypoints.",
+      "oneOf": [
+        {
+          "description": "Entrypoints to be executed against the V1 Casper VM.",
+          "type": "object",
+          "required": [
+            "V1CasperVm"
+          ],
+          "properties": {
+            "V1CasperVm": {
+              "$ref": "#/definitions/EntryPoint2"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "Entrypoints to be executed against the V2 Casper VM.",
+          "type": "object",
+          "required": [
+            "V2CasperVm"
+          ],
+          "properties": {
+            "V2CasperVm": {
+              "$ref": "#/definitions/EntryPointV2"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "EntryPoint2": {
+      "description": "Type signature of a method. Order of arguments matter since can be referenced by index as well as name.",
+      "type": "object",
+      "required": [
+        "access",
+        "args",
+        "entry_point_payment",
+        "entry_point_type",
+        "name",
+        "ret"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Parameter"
+          }
+        },
+        "ret": {
+          "$ref": "#/definitions/CLType"
+        },
+        "access": {
+          "$ref": "#/definitions/EntryPointAccess"
+        },
+        "entry_point_type": {
+          "$ref": "#/definitions/EntryPointType"
+        },
+        "entry_point_payment": {
+          "$ref": "#/definitions/EntryPointPayment"
+        }
+      }
+    },
+    "EntryPointPayment": {
+      "description": "An enum specifying who pays for the invocation and execution of the entrypoint.",
+      "oneOf": [
+        {
+          "description": "The caller must cover cost",
+          "type": "string",
+          "enum": [
+            "Caller"
+          ]
+        },
+        {
+          "description": "Will cover cost to execute self but not cost of any subsequent invoked contracts",
+          "type": "string",
+          "enum": [
+            "SelfOnly"
+          ]
+        },
+        {
+          "description": "will cover cost to execute self and the cost of any subsequent invoked contracts",
+          "type": "string",
+          "enum": [
+            "SelfOnward"
+          ]
+        }
+      ]
+    },
+    "EntryPointV2": {
+      "description": "The entry point for the V2 Casper VM.",
+      "type": "object",
+      "required": [
+        "flags",
+        "function_index"
+      ],
+      "properties": {
+        "function_index": {
+          "description": "The selector.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "flags": {
+          "description": "The flags.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
         }
       }
     },

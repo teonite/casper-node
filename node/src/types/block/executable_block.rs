@@ -4,7 +4,8 @@ use datasize::DataSize;
 use serde::Serialize;
 
 use casper_types::{
-    BlockV2, EraId, PublicKey, RewardedSignatures, Timestamp, Transaction, TransactionHash, U512,
+    BlockV2, EraId, PublicKey, RewardedSignatures, Timestamp, Transaction, TransactionHash,
+    AUCTION_LANE_ID, INSTALL_UPGRADE_LANE_ID, MINT_LANE_ID, U512,
 };
 
 use super::{FinalizedBlock, InternalEraReport};
@@ -21,20 +22,37 @@ pub struct ExecutableBlock {
     pub(crate) proposer: Box<PublicKey>,
     /// The transactions for the `FinalizedBlock`.
     pub(crate) transactions: Vec<Transaction>,
-    /// The hashes of the transfer transactions within the `FinalizedBlock`.
-    pub(crate) mint: Vec<TransactionHash>,
-    /// The hashes of the non-transfer, native transactions within the `FinalizedBlock`.
-    pub(crate) auction: Vec<TransactionHash>,
-    /// The hashes of the installer/upgrader transactions within the `FinalizedBlock`.
-    pub(crate) install_upgrade: Vec<TransactionHash>,
-    /// The hashes of all other transactions within the `FinalizedBlock`.
-    pub(crate) standard: Vec<TransactionHash>,
+    pub(crate) transaction_map: BTreeMap<u8, Vec<TransactionHash>>,
     /// `None` may indicate that the rewards have not been computed yet,
     /// or that the block is not a switch one.
-    pub(crate) rewards: Option<BTreeMap<PublicKey, U512>>,
+    pub(crate) rewards: Option<BTreeMap<PublicKey, Vec<U512>>>,
+    /// `None` may indicate that the next era gas has not been computed yet,
+    /// or that the block is not a switch one.
+    pub(crate) next_era_gas_price: Option<u8>,
 }
 
 impl ExecutableBlock {
+    pub(crate) fn mint(&self) -> Vec<TransactionHash> {
+        self.transaction_map
+            .get(&MINT_LANE_ID)
+            .cloned()
+            .unwrap_or(vec![])
+    }
+
+    pub(crate) fn auction(&self) -> Vec<TransactionHash> {
+        self.transaction_map
+            .get(&AUCTION_LANE_ID)
+            .cloned()
+            .unwrap_or(vec![])
+    }
+
+    pub(crate) fn install_upgrade(&self) -> Vec<TransactionHash> {
+        self.transaction_map
+            .get(&INSTALL_UPGRADE_LANE_ID)
+            .cloned()
+            .unwrap_or(vec![])
+    }
+
     /// Creates a new `ExecutedBlock` from a `FinalizedBlock` and its transactions.
     pub fn from_finalized_block_and_transactions(
         finalized_block: FinalizedBlock,
@@ -49,11 +67,9 @@ impl ExecutableBlock {
             height: finalized_block.height,
             proposer: finalized_block.proposer,
             transactions,
-            mint: finalized_block.mint,
-            auction: finalized_block.auction,
-            install_upgrade: finalized_block.install_upgrade,
-            standard: finalized_block.standard,
+            transaction_map: finalized_block.transactions,
             rewards: None,
+            next_era_gas_price: None,
         }
     }
 
@@ -73,11 +89,9 @@ impl ExecutableBlock {
             height: block.height(),
             proposer: Box::new(block.proposer().clone()),
             transactions,
-            mint: block.mint().copied().collect(),
-            auction: block.auction().copied().collect(),
-            install_upgrade: block.install_upgrade().copied().collect(),
-            standard: block.standard().copied().collect(),
+            transaction_map: block.transactions().clone(),
             rewards: block.era_end().map(|era_end| era_end.rewards().clone()),
+            next_era_gas_price: block.era_end().map(|era_end| era_end.next_era_gas_price()),
         }
     }
 }
@@ -87,17 +101,30 @@ impl fmt::Display for ExecutableBlock {
         write!(
             formatter,
             "executable block #{} in {}, timestamp {}, {} transfers, {} staking txns, {} \
-            install/upgrade txns, {} standard txns",
+            install/upgrade txns",
             self.height,
             self.era_id,
             self.timestamp,
-            self.mint.len(),
-            self.auction.len(),
-            self.install_upgrade.len(),
-            self.standard.len(),
+            self.mint().len(),
+            self.auction().len(),
+            self.install_upgrade().len(),
         )?;
+        for (category, wasm_transaction) in self.transaction_map.iter() {
+            if *category < 3 {
+                continue;
+            }
+            write!(
+                formatter,
+                ", category: {} with {} transactions",
+                *category,
+                wasm_transaction.len()
+            )?;
+        }
         if let Some(ref ee) = self.era_report {
             write!(formatter, ", era_end: {:?}", ee)?;
+        }
+        if let Some(ref next_era_gas_price) = self.next_era_gas_price {
+            write!(formatter, ", next_era_gas_price: {}", next_era_gas_price)?;
         }
         Ok(())
     }

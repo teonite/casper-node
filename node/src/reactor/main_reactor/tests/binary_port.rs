@@ -1,17 +1,18 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    convert::TryInto,
+    convert::{TryFrom, TryInto},
     iter,
     sync::Arc,
     time::Duration,
 };
 
 use casper_binary_port::{
-    BalanceResponse, BinaryRequest, BinaryRequestHeader, BinaryResponse, BinaryResponseAndRequest,
-    ConsensusStatus, ConsensusValidatorChanges, DictionaryItemIdentifier, DictionaryQueryResult,
-    ErrorCode, GetRequest, GetTrieFullResult, GlobalStateQueryResult, GlobalStateRequest,
-    InformationRequest, InformationRequestTag, LastProgress, NetworkName, NodeStatus, PayloadType,
-    PurseIdentifier, ReactorStateName, RecordId, Uptime,
+    BalanceResponse, BinaryMessage, BinaryMessageCodec, BinaryRequest, BinaryRequestHeader,
+    BinaryResponse, BinaryResponseAndRequest, ConsensusStatus, ConsensusValidatorChanges,
+    DictionaryItemIdentifier, DictionaryQueryResult, EraIdentifier, ErrorCode, GetRequest,
+    GetTrieFullResult, GlobalStateQueryResult, GlobalStateRequest, InformationRequest,
+    InformationRequestTag, KeyPrefix, LastProgress, NetworkName, NodeStatus, PayloadType,
+    PurseIdentifier, ReactorStateName, RecordId, RewardResponse, Uptime,
 };
 use casper_storage::global_state::state::CommitProvider;
 use casper_types::{
@@ -22,18 +23,14 @@ use casper_types::{
     testing::TestRng,
     Account, AvailableBlockRange, Block, BlockHash, BlockHeader, BlockIdentifier,
     BlockSynchronizerStatus, CLValue, CLValueDictionary, ChainspecRawBytes, DictionaryAddr, Digest,
-    EntityAddr, GlobalStateIdentifier, Key, KeyTag, NextUpgrade, Peers, ProtocolVersion, SecretKey,
-    SignedBlock, StoredValue, Timestamp, Transaction, TransactionV1Builder, Transfer, URef, U512,
+    EntityAddr, GlobalStateIdentifier, Key, KeyTag, NextUpgrade, Peers, ProtocolVersion, PublicKey,
+    Rewards, SecretKey, SignedBlock, StoredValue, Transaction, TransactionV1Builder, Transfer,
+    URef, U512,
 };
-use juliet::{
-    io::IoCoreBuilder,
-    protocol::ProtocolBuilder,
-    rpc::{JulietRpcClient, RpcBuilder},
-    ChannelConfiguration, ChannelId,
-};
+use futures::{SinkExt, StreamExt};
 use rand::Rng;
 use tokio::{net::TcpStream, time::timeout};
-use tracing::error;
+use tokio_util::codec::Framed;
 
 use crate::{
     reactor::{main_reactor::MainReactor, Runner},
@@ -43,15 +40,17 @@ use crate::{
     types::NodeId,
 };
 
-use super::{InitialStakes, TestFixture};
+use super::{InitialStakes, TestFixture, ERA_ONE};
 
-const GUARANTEED_BLOCK_HEIGHT: u64 = 2;
+const GUARANTEED_BLOCK_HEIGHT: u64 = 4;
 
 const TEST_DICT_NAME: &str = "test_dict";
 const TEST_DICT_ITEM_KEY: &str = "test_key";
+const MESSAGE_SIZE: u32 = 1024 * 1024 * 10;
 
 struct TestData {
     rng: TestRng,
+    protocol_version: ProtocolVersion,
     chainspec_raw_bytes: ChainspecRawBytes,
     highest_block: Block,
     secret_signing_key: Arc<SecretKey>,
@@ -59,6 +58,7 @@ struct TestData {
     test_account_hash: AccountHash,
     test_entity_addr: EntityAddr,
     test_dict_seed_uref: URef,
+    era_one_validator: PublicKey,
 }
 
 fn network_produced_blocks(
@@ -77,7 +77,7 @@ fn network_produced_blocks(
 }
 
 async fn setup() -> (
-    JulietRpcClient<1>,
+    Framed<TcpStream, BinaryMessageCodec>,
     (
         impl futures::Future<Output = (TestingNetwork<FilterReactor<MainReactor>>, TestRng)>,
         TestData,
@@ -118,6 +118,17 @@ async fn setup() -> (
                 .read_highest_block()
         })
         .expect("should have highest block");
+    let era_end = first_node
+        .main_reactor()
+        .storage()
+        .get_switch_block_by_era_id(&ERA_ONE)
+        .expect("should not fail retrieving switch block")
+        .expect("should have switch block")
+        .clone_era_end()
+        .expect("should have era end");
+    let Rewards::V2(rewards) = era_end.rewards() else {
+        panic!("should have rewards V2");
+    };
 
     let effects = test_effects(&mut rng);
 
@@ -135,38 +146,23 @@ async fn setup() -> (
         .bind_address()
         .expect("should be bound");
 
+    let protocol_version = first_node.main_reactor().chainspec.protocol_version();
     // We let the entire network run in the background, until our request completes.
     let finish_cranking = fixture.run_until_stopped(rng.create_child());
 
-    // Set-up juliet client.
-    let protocol_builder = ProtocolBuilder::<1>::with_default_channel_config(
-        ChannelConfiguration::default()
-            .with_request_limit(10)
-            .with_max_request_payload_size(1024 * 1024 * 8)
-            .with_max_response_payload_size(1024 * 1024 * 8),
-    );
-    let io_builder = IoCoreBuilder::new(protocol_builder).buffer_size(ChannelId::new(0), 4096);
-    let rpc_builder = RpcBuilder::new(io_builder);
+    // Set-up client.
     let address = format!("localhost:{}", binary_port_addr.port());
     let stream = TcpStream::connect(address.clone())
         .await
         .expect("should create stream");
-    let (reader, writer) = stream.into_split();
-    let (client, mut server) = rpc_builder.build(reader, writer);
-
-    // We are not using the server functionality, but still need to run it for IO reasons.
-    tokio::spawn(async move {
-        if let Err(err) = server.next_request().await {
-            error!(%err, "server read error");
-        }
-    });
 
     (
-        client,
+        Framed::new(stream, BinaryMessageCodec::new(MESSAGE_SIZE)),
         (
             finish_cranking,
             TestData {
                 rng,
+                protocol_version,
                 chainspec_raw_bytes,
                 highest_block,
                 secret_signing_key,
@@ -174,6 +170,11 @@ async fn setup() -> (
                 test_account_hash: effects.test_account_hash,
                 test_entity_addr: effects.test_entity_addr,
                 test_dict_seed_uref: effects.test_dict_seed_uref,
+                era_one_validator: rewards
+                    .last_key_value()
+                    .expect("should have at least one reward")
+                    .0
+                    .clone(),
             },
         ),
     )
@@ -287,15 +288,16 @@ where
 }
 
 #[tokio::test]
-async fn binary_port_component() {
+async fn binary_port_component_handles_all_requests() {
     testing::init_logging();
 
     let (
-        client,
+        mut client,
         (
             finish_cranking,
             TestData {
                 mut rng,
+                protocol_version,
                 chainspec_raw_bytes: network_chainspec_raw_bytes,
                 highest_block,
                 secret_signing_key,
@@ -303,6 +305,7 @@ async fn binary_port_component() {
                 test_account_hash,
                 test_entity_addr,
                 test_dict_seed_uref,
+                era_one_validator,
             },
         ),
     ) = setup().await;
@@ -317,12 +320,12 @@ async fn binary_port_component() {
         network_name(),
         consensus_validator_changes(),
         block_synchronizer_status(),
-        available_block_range(),
+        available_block_range(highest_block.height()),
         next_upgrade(),
         consensus_status(),
         chainspec_raw_bytes(network_chainspec_raw_bytes),
         latest_switch_block_header(),
-        node_status(),
+        node_status(protocol_version),
         get_block_header(highest_block.clone_header()),
         get_block_transfers(highest_block.clone_header()),
         get_era_summary(state_root_hash),
@@ -354,19 +357,40 @@ async fn binary_port_component() {
         try_spec_exec_invalid(&mut rng),
         try_accept_transaction_invalid(&mut rng),
         try_accept_transaction(&secret_signing_key),
-        get_balance_by_block(*highest_block.hash()),
-        get_balance_by_state_root(state_root_hash, test_account_hash),
+        get_balance(state_root_hash, test_account_hash),
+        get_balance_account_not_found(state_root_hash),
+        get_balance_purse_uref_not_found(state_root_hash),
+        get_named_keys_by_prefix(state_root_hash, test_entity_addr),
+        get_reward(
+            Some(EraIdentifier::Era(ERA_ONE)),
+            era_one_validator.clone(),
+            None,
+        ),
+        get_reward(
+            Some(EraIdentifier::Block(BlockIdentifier::Height(1))),
+            era_one_validator,
+            None,
+        ),
+        get_protocol_version(protocol_version),
     ];
 
-    for TestCase {
-        name,
-        request,
-        asserter,
-    } in test_cases
+    for (
+        index,
+        TestCase {
+            name,
+            request,
+            asserter,
+        },
+    ) in test_cases.iter().enumerate()
     {
-        let header = BinaryRequestHeader::new(ProtocolVersion::from_parts(2, 0, 0), request.tag());
+        let header = BinaryRequestHeader::new(
+            ProtocolVersion::from_parts(2, 0, 0),
+            request.tag(),
+            index as u16,
+        );
         let header_bytes = ToBytes::to_bytes(&header).expect("should serialize");
 
+        let original_request_id = header.id();
         let original_request_bytes = header_bytes
             .iter()
             .chain(
@@ -377,27 +401,30 @@ async fn binary_port_component() {
             .cloned()
             .collect::<Vec<_>>();
 
-        let request_guard = client
-            .create_request(ChannelId::new(0))
-            .with_payload(original_request_bytes.clone().into())
-            .queue_for_sending()
-            .await;
+        client
+            .send(BinaryMessage::new(original_request_bytes.clone()))
+            .await
+            .expect("should send message");
 
-        let response = timeout(Duration::from_secs(10), request_guard.wait_for_response())
+        let response = timeout(Duration::from_secs(10), client.next())
             .await
             .unwrap_or_else(|err| panic!("{}: should complete without timeout: {}", name, err))
-            .unwrap_or_else(|err| panic!("{}: should have ok response: {}", name, err))
-            .unwrap_or_else(|| panic!("{}: should have bytes", name));
+            .unwrap_or_else(|| panic!("{}: should have bytes", name))
+            .unwrap_or_else(|err| panic!("{}: should have ok response: {}", name, err));
         let (binary_response_and_request, _): (BinaryResponseAndRequest, _) =
-            FromBytes::from_bytes(&response).expect("should deserialize response");
+            FromBytes::from_bytes(response.payload()).expect("should deserialize response");
 
-        let mirrored_request_bytes = binary_response_and_request.original_request();
+        let mirrored_request_bytes = binary_response_and_request.original_request_bytes();
         assert_eq!(
             mirrored_request_bytes,
             original_request_bytes.as_slice(),
             "{}",
             name
         );
+
+        let mirrored_request_id = binary_response_and_request.original_request_id();
+        assert_eq!(mirrored_request_id, original_request_id, "{}", name);
+
         assert!(asserter(binary_response_and_request.response()), "{}", name);
     }
 
@@ -553,18 +580,18 @@ fn block_synchronizer_status() -> TestCase {
     }
 }
 
-fn available_block_range() -> TestCase {
+fn available_block_range(expected_height: u64) -> TestCase {
     TestCase {
         name: "available_block_range",
         request: BinaryRequest::Get(GetRequest::Information {
             info_type_tag: InformationRequestTag::AvailableBlockRange.into(),
             key: vec![],
         }),
-        asserter: Box::new(|response| {
+        asserter: Box::new(move |response| {
             assert_response::<AvailableBlockRange, _>(
                 response,
                 Some(PayloadType::AvailableBlockRange),
-                |abr| abr.low() == 0 && abr.high() >= GUARANTEED_BLOCK_HEIGHT,
+                |abr| abr.low() == 0 && abr.high() >= expected_height,
             )
         }),
     }
@@ -630,7 +657,7 @@ fn latest_switch_block_header() -> TestCase {
     }
 }
 
-fn node_status() -> TestCase {
+fn node_status(expected_version: ProtocolVersion) -> TestCase {
     TestCase {
         name: "node_status",
         request: BinaryRequest::Get(GetRequest::Information {
@@ -642,7 +669,8 @@ fn node_status() -> TestCase {
                 response,
                 Some(PayloadType::NodeStatus),
                 |node_status| {
-                    !node_status.peers.into_inner().is_empty()
+                    node_status.protocol_version == expected_version
+                        && !node_status.peers.into_inner().is_empty()
                         && node_status.chainspec_name == "casper-example"
                         && node_status.last_added_block_info.is_some()
                         && node_status.our_public_signing_key.is_some()
@@ -733,7 +761,7 @@ fn get_trie(digest: Digest) -> TestCase {
             assert_response::<GetTrieFullResult, _>(
                 response,
                 Some(PayloadType::GetTrieFullResult),
-                |res| matches!(res.into_inner(), Some(_)),
+                |res| res.into_inner().is_some(),
             )
         }),
     }
@@ -851,40 +879,104 @@ fn get_dictionary_item_by_named_key(
     }
 }
 
-fn get_balance_by_block(block_hash: BlockHash) -> TestCase {
+fn get_balance(state_root_hash: Digest, account_hash: AccountHash) -> TestCase {
     TestCase {
-        name: "get_balance_by_block",
-        request: BinaryRequest::Get(GetRequest::State(Box::new(
-            GlobalStateRequest::BalanceByBlock {
-                block_identifier: Some(BlockIdentifier::Hash(block_hash)),
-                purse_identifier: PurseIdentifier::Payment,
-            },
-        ))),
-        asserter: Box::new(|response| {
-            assert_response::<BalanceResponse, _>(
-                response,
-                Some(PayloadType::BalanceResponse),
-                |res| res.available_balance == U512::zero(),
-            )
-        }),
-    }
-}
-
-fn get_balance_by_state_root(state_root_hash: Digest, account_hash: AccountHash) -> TestCase {
-    TestCase {
-        name: "get_balance_by_state_root",
-        request: BinaryRequest::Get(GetRequest::State(Box::new(
-            GlobalStateRequest::BalanceByStateRoot {
-                state_identifier: Some(GlobalStateIdentifier::StateRootHash(state_root_hash)),
-                purse_identifier: PurseIdentifier::Account(account_hash),
-                timestamp: Timestamp::now(),
-            },
-        ))),
+        name: "get_balance",
+        request: BinaryRequest::Get(GetRequest::State(Box::new(GlobalStateRequest::Balance {
+            state_identifier: Some(GlobalStateIdentifier::StateRootHash(state_root_hash)),
+            purse_identifier: PurseIdentifier::Account(account_hash),
+        }))),
         asserter: Box::new(|response| {
             assert_response::<BalanceResponse, _>(
                 response,
                 Some(PayloadType::BalanceResponse),
                 |res| res.available_balance == U512::one(),
+            )
+        }),
+    }
+}
+
+fn get_balance_account_not_found(state_root_hash: Digest) -> TestCase {
+    TestCase {
+        name: "get_balance_account_not_found",
+        request: BinaryRequest::Get(GetRequest::State(Box::new(GlobalStateRequest::Balance {
+            state_identifier: Some(GlobalStateIdentifier::StateRootHash(state_root_hash)),
+            purse_identifier: PurseIdentifier::Account(AccountHash([9; 32])),
+        }))),
+        asserter: Box::new(|response| response.error_code() == ErrorCode::PurseNotFound as u16),
+    }
+}
+
+fn get_balance_purse_uref_not_found(state_root_hash: Digest) -> TestCase {
+    TestCase {
+        name: "get_balance_purse_uref_not_found",
+        request: BinaryRequest::Get(GetRequest::State(Box::new(GlobalStateRequest::Balance {
+            state_identifier: Some(GlobalStateIdentifier::StateRootHash(state_root_hash)),
+            purse_identifier: PurseIdentifier::Purse(URef::new([9; 32], Default::default())),
+        }))),
+        asserter: Box::new(|response| response.error_code() == ErrorCode::PurseNotFound as u16),
+    }
+}
+
+fn get_named_keys_by_prefix(state_root_hash: Digest, entity_addr: EntityAddr) -> TestCase {
+    TestCase {
+        name: "get_named_keys_by_prefix",
+        request: BinaryRequest::Get(GetRequest::State(Box::new(
+            GlobalStateRequest::ItemsByPrefix {
+                state_identifier: Some(GlobalStateIdentifier::StateRootHash(state_root_hash)),
+                key_prefix: KeyPrefix::NamedKeysByEntity(entity_addr),
+            },
+        ))),
+        asserter: Box::new(|response| {
+            assert_response::<Vec<StoredValue>, _>(
+                response,
+                Some(PayloadType::StoredValues),
+                |res| res.iter().all(|v| matches!(v, StoredValue::NamedKey(_))),
+            )
+        }),
+    }
+}
+
+fn get_reward(
+    era_identifier: Option<EraIdentifier>,
+    validator: PublicKey,
+    delegator: Option<PublicKey>,
+) -> TestCase {
+    let key = InformationRequest::Reward {
+        era_identifier,
+        validator: validator.into(),
+        delegator: delegator.map(Box::new),
+    };
+
+    TestCase {
+        name: "get_reward",
+        request: BinaryRequest::Get(GetRequest::Information {
+            info_type_tag: key.tag().into(),
+            key: key.to_bytes().expect("should serialize key"),
+        }),
+        asserter: Box::new(move |response| {
+            assert_response::<RewardResponse, _>(response, Some(PayloadType::Reward), |reward| {
+                // test fixture sets delegation rate to 0
+                reward.amount() > U512::zero() && reward.delegation_rate() == 0
+            })
+        }),
+    }
+}
+
+fn get_protocol_version(expected: ProtocolVersion) -> TestCase {
+    let key = InformationRequest::ProtocolVersion;
+
+    TestCase {
+        name: "get_protocol_version",
+        request: BinaryRequest::Get(GetRequest::Information {
+            info_type_tag: key.tag().into(),
+            key: vec![],
+        }),
+        asserter: Box::new(move |response| {
+            assert_response::<ProtocolVersion, _>(
+                response,
+                Some(PayloadType::ProtocolVersion),
+                |version| expected == version,
             )
         }),
     }
@@ -901,7 +993,7 @@ fn try_accept_transaction(key: &SecretKey) -> TestCase {
     TestCase {
         name: "try_accept_transaction",
         request: BinaryRequest::TryAcceptTransaction { transaction },
-        asserter: Box::new(|response| response.error_code() == ErrorCode::NoError as u8),
+        asserter: Box::new(|response| response.error_code() == ErrorCode::NoError as u16),
     }
 }
 
@@ -910,7 +1002,7 @@ fn try_accept_transaction_invalid(rng: &mut TestRng) -> TestCase {
     TestCase {
         name: "try_accept_transaction_invalid",
         request: BinaryRequest::TryAcceptTransaction { transaction },
-        asserter: Box::new(|response| response.error_code() == ErrorCode::InvalidTransaction as u8),
+        asserter: Box::new(|response| ErrorCode::try_from(response.error_code()).is_ok()),
     }
 }
 
@@ -919,6 +1011,153 @@ fn try_spec_exec_invalid(rng: &mut TestRng) -> TestCase {
     TestCase {
         name: "try_spec_exec_invalid",
         request: BinaryRequest::TrySpeculativeExec { transaction },
-        asserter: Box::new(|response| response.error_code() == ErrorCode::InvalidTransaction as u8),
+        asserter: Box::new(|response| ErrorCode::try_from(response.error_code()).is_ok()),
     }
+}
+
+#[tokio::test]
+async fn binary_port_component_rejects_requests_with_invalid_header_version() {
+    testing::init_logging();
+
+    let (mut client, (finish_cranking, _)) = setup().await;
+
+    let request = BinaryRequest::Get(GetRequest::Information {
+        info_type_tag: InformationRequestTag::Uptime.into(),
+        key: vec![],
+    });
+
+    let mut header =
+        BinaryRequestHeader::new(ProtocolVersion::from_parts(2, 0, 0), request.tag(), 0);
+
+    // Make the binary protocol version incompatible.
+    header.set_binary_request_version(header.version() + 1);
+
+    let header_bytes = ToBytes::to_bytes(&header).expect("should serialize");
+    let original_request_bytes = header_bytes
+        .iter()
+        .chain(
+            ToBytes::to_bytes(&request)
+                .expect("should serialize")
+                .iter(),
+        )
+        .cloned()
+        .collect::<Vec<_>>();
+    client
+        .send(BinaryMessage::new(original_request_bytes.clone()))
+        .await
+        .expect("should send message");
+    let response = timeout(Duration::from_secs(10), client.next())
+        .await
+        .unwrap_or_else(|_| panic!("should complete without timeout"))
+        .unwrap_or_else(|| panic!("should have bytes"))
+        .unwrap_or_else(|_| panic!("should have ok response"));
+    let (binary_response_and_request, _): (BinaryResponseAndRequest, _) =
+        FromBytes::from_bytes(response.payload()).expect("should deserialize response");
+
+    assert_eq!(
+        binary_response_and_request.response().error_code(),
+        ErrorCode::BinaryProtocolVersionMismatch as u16
+    );
+
+    let (_net, _rng) = timeout(Duration::from_secs(10), finish_cranking)
+        .await
+        .unwrap_or_else(|_| panic!("should finish cranking without timeout"));
+}
+
+#[tokio::test]
+async fn binary_port_component_rejects_requests_with_incompatible_protocol_version() {
+    testing::init_logging();
+
+    let (mut client, (finish_cranking, _)) = setup().await;
+
+    let request = BinaryRequest::Get(GetRequest::Information {
+        info_type_tag: InformationRequestTag::Uptime.into(),
+        key: vec![],
+    });
+
+    let mut header =
+        BinaryRequestHeader::new(ProtocolVersion::from_parts(2, 0, 0), request.tag(), 0);
+
+    // Make the protocol version incompatible.
+    header.set_chain_protocol_version(ProtocolVersion::from_parts(u32::MAX, u32::MAX, u32::MAX));
+
+    let header_bytes = ToBytes::to_bytes(&header).expect("should serialize");
+    let original_request_bytes = header_bytes
+        .iter()
+        .chain(
+            ToBytes::to_bytes(&request)
+                .expect("should serialize")
+                .iter(),
+        )
+        .cloned()
+        .collect::<Vec<_>>();
+    client
+        .send(BinaryMessage::new(original_request_bytes.clone()))
+        .await
+        .expect("should send message");
+    let response = timeout(Duration::from_secs(10), client.next())
+        .await
+        .unwrap_or_else(|_| panic!("should complete without timeout"))
+        .unwrap_or_else(|| panic!("should have bytes"))
+        .unwrap_or_else(|_| panic!("should have ok response"));
+    let (binary_response_and_request, _): (BinaryResponseAndRequest, _) =
+        FromBytes::from_bytes(response.payload()).expect("should deserialize response");
+
+    assert_eq!(
+        binary_response_and_request.response().error_code(),
+        ErrorCode::UnsupportedProtocolVersion as u16
+    );
+
+    let (_net, _rng) = timeout(Duration::from_secs(10), finish_cranking)
+        .await
+        .unwrap_or_else(|_| panic!("should finish cranking without timeout"));
+}
+
+#[tokio::test]
+async fn binary_port_component_accepts_requests_with_compatible_but_different_protocol_version() {
+    testing::init_logging();
+
+    let (mut client, (finish_cranking, _)) = setup().await;
+
+    let request = BinaryRequest::Get(GetRequest::Information {
+        info_type_tag: InformationRequestTag::Uptime.into(),
+        key: vec![],
+    });
+
+    let mut header =
+        BinaryRequestHeader::new(ProtocolVersion::from_parts(2, 0, 0), request.tag(), 0);
+
+    // Make the protocol different but compatible.
+    header.set_chain_protocol_version(ProtocolVersion::from_parts(2, u32::MAX, u32::MAX));
+
+    let header_bytes = ToBytes::to_bytes(&header).expect("should serialize");
+    let original_request_bytes = header_bytes
+        .iter()
+        .chain(
+            ToBytes::to_bytes(&request)
+                .expect("should serialize")
+                .iter(),
+        )
+        .cloned()
+        .collect::<Vec<_>>();
+    client
+        .send(BinaryMessage::new(original_request_bytes.clone()))
+        .await
+        .expect("should send message");
+    let response = timeout(Duration::from_secs(10), client.next())
+        .await
+        .unwrap_or_else(|_| panic!("should complete without timeout"))
+        .unwrap_or_else(|| panic!("should have bytes"))
+        .unwrap_or_else(|_| panic!("should have ok response"));
+    let (binary_response_and_request, _): (BinaryResponseAndRequest, _) =
+        FromBytes::from_bytes(response.payload()).expect("should deserialize response");
+
+    assert_eq!(
+        binary_response_and_request.response().error_code(),
+        ErrorCode::NoError as u16
+    );
+
+    let (_net, _rng) = timeout(Duration::from_secs(10), finish_cranking)
+        .await
+        .unwrap_or_else(|_| panic!("should finish cranking without timeout"));
 }

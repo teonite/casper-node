@@ -12,11 +12,9 @@ use casper_types::{
     api_error,
     bytesrepr::{self, ToBytes},
     contract_messages::MessageTopicOperation,
-    crypto,
-    system::auction::EraInfo,
-    AddressableEntityHash, ApiError, EntityVersion, EraId, Gas, Group, HostFunction,
-    HostFunctionCost, Key, PackageHash, PackageStatus, StoredValue, URef,
-    DEFAULT_HOST_FUNCTION_NEW_DICTIONARY, U512, UREF_SERIALIZED_LENGTH,
+    crypto, AddressableEntityHash, ApiError, EntityVersion, Gas, Group, HostFunction,
+    HostFunctionCost, Key, PackageHash, PackageStatus, StoredValue, URef, U512,
+    UREF_SERIALIZED_LENGTH,
 };
 
 use super::{args::Args, ExecError, Runtime};
@@ -575,6 +573,9 @@ where
                     existing_urefs_size,
                     output_size_ptr,
                 ) = Args::parse(args)?;
+
+                // TODO - use `num_new_urefs` * costs for unit uref, assuming these aren't
+                // already charged.
                 self.charge_host_function_call(
                     &host_function_costs.create_contract_user_group,
                     [
@@ -881,6 +882,7 @@ where
                 // args(4) = output of size value of host bytes data
                 let (package_ptr, package_size, label_ptr, label_size, value_size_ptr) =
                     Args::parse(args)?;
+                // TODO - add cost for 1x unit uref, assuming this isn't already charged
                 self.charge_host_function_call(
                     &host_function_costs.provision_contract_user_group_uref,
                     [
@@ -958,50 +960,13 @@ where
                 Ok(Some(RuntimeValue::I32(0)))
             }
 
-            FunctionIndex::RecordTransfer => {
-                // RecordTransfer is a special cased internal host function only callable by the
-                // mint contract and for accounting purposes it isn't represented in protocol data.
-                let (
-                    maybe_to_ptr,
-                    maybe_to_size,
-                    source_ptr,
-                    source_size,
-                    target_ptr,
-                    target_size,
-                    amount_ptr,
-                    amount_size,
-                    id_ptr,
-                    id_size,
-                ): (u32, u32, u32, u32, u32, u32, u32, u32, u32, u32) = Args::parse(args)?;
-                let maybe_to: Option<AccountHash> = self.t_from_mem(maybe_to_ptr, maybe_to_size)?;
-                let source: URef = self.t_from_mem(source_ptr, source_size)?;
-                let target: URef = self.t_from_mem(target_ptr, target_size)?;
-                let amount: U512 = self.t_from_mem(amount_ptr, amount_size)?;
-                let id: Option<u64> = self.t_from_mem(id_ptr, id_size)?;
-                self.record_transfer(maybe_to, source, target, amount, id)?;
-                Ok(Some(RuntimeValue::I32(0)))
-            }
-
-            FunctionIndex::RecordEraInfo => {
-                // RecordEraInfo is a special cased internal host function only callable by the
-                // auction contract and for accounting purposes it isn't represented in protocol
-                // data.
-                let (era_id_ptr, era_id_size, era_info_ptr, era_info_size): (u32, u32, u32, u32) =
-                    Args::parse(args)?;
-                let _era_id: EraId = self.t_from_mem(era_id_ptr, era_id_size)?;
-                let era_info: EraInfo = self.t_from_mem(era_info_ptr, era_info_size)?;
-                self.record_era_info(era_info)?;
-                Ok(Some(RuntimeValue::I32(0)))
-            }
-
             FunctionIndex::NewDictionaryFuncIndex => {
                 // args(0) = pointer to output size (output param)
                 let (output_size_ptr,): (u32,) = Args::parse(args)?;
 
-                self.charge_host_function_call(
-                    &DEFAULT_HOST_FUNCTION_NEW_DICTIONARY,
-                    [output_size_ptr],
-                )?;
+                // TODO - dynamically calculate the size of the new data.  Currently using
+                //        hard-coded 33 which is correct as of now.
+                self.charge_host_function_call(&host_function_costs.new_uref, [0, 0, 33])?;
                 let ret = self.new_dictionary(output_size_ptr)?;
                 Ok(Some(RuntimeValue::I32(api_error::i32_from(ret))))
             }
@@ -1079,6 +1044,20 @@ where
                     [call_stack_len_ptr, result_size_ptr],
                 )?;
                 let ret = self.load_call_stack(call_stack_len_ptr, result_size_ptr)?;
+                Ok(Some(RuntimeValue::I32(api_error::i32_from(ret))))
+            }
+
+            FunctionIndex::LoadCallerInformation => {
+                // args(0) (Input) Type of action
+                // args(1) (Output) Pointer to number of elements in the call stack.
+                // args(2) (Output) Pointer to size in bytes of the serialized call stack.
+                let (action, call_stack_len_ptr, result_size_ptr) = Args::parse(args)?;
+                self.charge_host_function_call(
+                    &HostFunction::fixed(10_000),
+                    [0, call_stack_len_ptr, result_size_ptr],
+                )?;
+                let ret =
+                    self.load_caller_information(action, call_stack_len_ptr, result_size_ptr)?;
                 Ok(Some(RuntimeValue::I32(api_error::i32_from(ret))))
             }
 

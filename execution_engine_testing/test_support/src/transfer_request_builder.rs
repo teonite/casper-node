@@ -17,8 +17,8 @@ use casper_types::{
     account::AccountHash,
     bytesrepr::ToBytes,
     system::mint::{ARG_AMOUNT, ARG_ID, ARG_SOURCE, ARG_TARGET},
-    BlockTime, CLValue, Digest, FeeHandling, Gas, HoldsEpoch, InitiatorAddr, ProtocolVersion,
-    RefundHandling, RuntimeArgs, TransactionHash, TransactionV1Hash, TransferTarget, URef,
+    BlockTime, CLValue, Digest, FeeHandling, Gas, InitiatorAddr, ProtocolVersion, RefundHandling,
+    RuntimeArgs, TransactionHash, TransactionV1Hash, TransferTarget, URef,
     DEFAULT_GAS_HOLD_INTERVAL, U512,
 };
 
@@ -54,6 +54,8 @@ impl TransferRequestBuilder {
         0,
         500_000_000_000,
         DEFAULT_GAS_HOLD_INTERVAL.millis(),
+        false,
+        Ratio::new_raw(U512::zero(), U512::zero()),
     );
     /// The default value used for `TransferRequest::state_hash`.
     pub const DEFAULT_STATE_HASH: Digest = Digest::from_raw([1; 32]);
@@ -155,9 +157,6 @@ impl TransferRequestBuilder {
     /// that this generated hash is not the same as what would have been generated on an actual
     /// `Transaction` for an equivalent request.
     pub fn build(self) -> TransferRequest {
-        let holds_epoch =
-            HoldsEpoch::from_millis(self.block_time.value(), self.config.balance_hold_interval());
-
         let txn_hash = match self.transaction_hash {
             Some(txn_hash) => txn_hash,
             None => {
@@ -211,7 +210,6 @@ impl TransferRequestBuilder {
         TransferRequest::with_runtime_args(
             self.config,
             self.state_hash,
-            holds_epoch,
             self.protocol_version,
             txn_hash,
             self.initiator,

@@ -1,4 +1,4 @@
-#![allow(clippy::integer_arithmetic)] // In tests, overflows panic anyway.
+#![allow(clippy::arithmetic_side_effects)] // In tests, overflows panic anyway.
 
 use std::{
     collections::{hash_map::DefaultHasher, HashMap, VecDeque},
@@ -61,8 +61,6 @@ impl Display for ConsensusValue {
 const TEST_MIN_ROUND_LEN: TimeDiff = TimeDiff::from_millis(1 << 12);
 const TEST_MAX_ROUND_LEN: TimeDiff = TimeDiff::from_millis(1 << 19);
 const TEST_END_HEIGHT: u64 = 100000;
-pub(crate) const TEST_BLOCK_REWARD: u64 = 1_000_000_000_000;
-pub(crate) const TEST_REDUCED_BLOCK_REWARD: u64 = 200_000_000_000;
 pub(crate) const TEST_INSTANCE_ID: u64 = 42;
 pub(crate) const TEST_ENDORSEMENT_EVIDENCE_LIMIT: u64 = 20;
 
@@ -75,7 +73,7 @@ enum HighwayMessage {
 }
 
 impl Debug for HighwayMessage {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             HighwayMessage::Timer(t) => f.debug_tuple("Timer").field(&t.millis()).finish(),
             HighwayMessage::RequestBlock(bc) => f
@@ -119,12 +117,12 @@ impl HighwayMessage {
         match effect {
             // The effect is `ValidVertex` but we want to gossip it to other
             // validators so for them it's just `Vertex` that needs to be validated.
-            Effect::NewVertex(ValidVertex(v)) => Some(HighwayMessage::NewVertex(Box::new(v))),
-            Effect::ScheduleTimer(t) => Some(HighwayMessage::Timer(t)),
-            Effect::RequestNewBlock(block_context) => {
-                Some(HighwayMessage::RequestBlock(block_context))
+            Effect::NewVertex(ValidVertex(v)) => HighwayMessage::NewVertex(Box::new(v)),
+            Effect::ScheduleTimer(t) => HighwayMessage::Timer(t),
+            Effect::RequestNewBlock(block_context, _expiry) => {
+                HighwayMessage::RequestBlock(block_context)
             }
-            Effect::WeAreFaulty(fault) => Some(HighwayMessage::WeAreFaulty(Box::new(fault))),
+            Effect::WeAreFaulty(fault) => HighwayMessage::WeAreFaulty(Box::new(fault)),
             Effect::SignWireUnit(_) | Effect::SignEndorsement(_) | Effect::SignPing(_) => None,
         }
     }
@@ -157,7 +155,7 @@ pub(crate) enum TestRunError {
 }
 
 impl Display for TestRunError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             TestRunError::NoMessages => write!(
                 f,
@@ -723,8 +721,6 @@ impl<'a, DS: DeliveryStrategy> MutableHandle<'a, DS> {
 fn test_params() -> Params {
     Params::new(
         0, // random seed
-        TEST_BLOCK_REWARD,
-        TEST_REDUCED_BLOCK_REWARD,
         TEST_MIN_ROUND_LEN,
         TEST_MAX_ROUND_LEN,
         TEST_MIN_ROUND_LEN,
@@ -1036,7 +1032,7 @@ impl Debug for HashWrapper {
 }
 
 impl Display for HashWrapper {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         Debug::fmt(self, f)
     }
 }
@@ -1152,8 +1148,8 @@ mod test_harness {
                 (
                     v.finalized_values().cloned().collect::<Vec<_>>(),
                     v.messages_produced()
+                        .filter(|&hwm| hwm.is_new_unit())
                         .cloned()
-                        .filter(|hwm| hwm.is_new_unit())
                         .count(),
                 )
             })

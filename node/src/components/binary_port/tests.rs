@@ -7,7 +7,7 @@ use serde::Serialize;
 use casper_binary_port::{BinaryRequest, BinaryResponse, GetRequest, GlobalStateRequest};
 
 use casper_types::{
-    BlockHeader, Digest, GlobalStateIdentifier, KeyTag, Timestamp, Transaction,
+    BlockHeader, Digest, GlobalStateIdentifier, KeyTag, PublicKey, Timestamp, Transaction,
     TransactionV1Builder,
 };
 
@@ -142,7 +142,7 @@ async fn should_return_error_for_disabled_functions() {
                 panic!("expected receiver to complete first")
             }
         };
-        assert_eq!(result.error_code(), EXPECTED_ERROR_CODE as u8)
+        assert_eq!(result.error_code(), EXPECTED_ERROR_CODE as u16)
     }
 }
 
@@ -163,8 +163,7 @@ async fn run_test_case(
         allow_request_get_all_values,
         allow_request_get_trie,
         allow_request_speculative_exec,
-        max_request_size_bytes: 1024,
-        max_response_size_bytes: 1024,
+        max_message_size_bytes: 1024,
         client_request_limit: 2,
         client_request_buffer_size: 16,
         max_connections: 2,
@@ -262,6 +261,7 @@ impl Reactor for MockReactor {
             }
             Event::AcceptTransactionRequest(req) => req.responder.respond(Ok(())).ignore(),
             Event::StorageRequest(StorageRequest::GetHighestCompleteBlockHeader { responder }) => {
+                let proposer = PublicKey::random(rng);
                 let block_header_v2 = casper_types::BlockHeaderV2::new(
                     Default::default(),
                     Default::default(),
@@ -272,6 +272,8 @@ impl Reactor for MockReactor {
                     Timestamp::now(),
                     Default::default(),
                     Default::default(),
+                    Default::default(),
+                    proposer,
                     Default::default(),
                     Default::default(),
                     Default::default(),

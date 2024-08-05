@@ -12,7 +12,7 @@ use casper_types::{
 use crate::components::network;
 
 /// Returns `false` and logs errors if the values set in the config don't make sense.
-#[tracing::instrument(ret, level = "info", skip(chainspec), fields(hash=%chainspec.hash()))]
+#[tracing::instrument(ret, level = "info", skip(chainspec), fields(hash = % chainspec.hash()))]
 pub fn validate_chainspec(chainspec: &Chainspec) -> bool {
     info!("begin chainspec validation");
 
@@ -45,13 +45,21 @@ pub fn validate_chainspec(chainspec: &Chainspec) -> bool {
         match chainspec.highway_config.is_valid() {
             Ok(_) => return true,
             Err(msg) => {
-                error!(
-                    rrm = %chainspec.highway_config.reduced_reward_multiplier,
-                    msg,
-                );
+                error!(msg);
                 return false;
             }
         }
+    }
+
+    // We don't support lookback by more than one era in the rewards scheme.
+    if chainspec.core_config.minimum_era_height < chainspec.core_config.signature_rewards_max_delay
+    {
+        error!(
+            minimum_era_height = %chainspec.core_config.minimum_era_height,
+            signature_rewards_max_delay = %chainspec.core_config.signature_rewards_max_delay,
+            "signature_rewards_max_delay must be less than minimum_era_height"
+        );
+        return false;
     }
 
     network::within_message_size_limit_tolerance(chainspec)
@@ -129,16 +137,10 @@ pub(crate) fn validate_core_config(core_config: &CoreConfig) -> bool {
 pub(crate) fn validate_transaction_config(transaction_config: &TransactionConfig) -> bool {
     // The total number of transactions should not exceed the number of approvals because each
     // transaction needs at least one approval to be valid.
-    if let Some(total_txn_slots) = transaction_config
-        .block_max_mint_count
-        .checked_add(transaction_config.block_max_auction_count)
-        .and_then(|total| total.checked_add(transaction_config.block_max_install_upgrade_count))
-        .and_then(|total| total.checked_add(transaction_config.block_max_standard_count))
-    {
-        transaction_config.block_max_approval_count >= total_txn_slots
-    } else {
-        false
-    }
+    let total_txn_slots = transaction_config
+        .transaction_v1_config
+        .get_max_block_count();
+    transaction_config.block_max_approval_count >= total_txn_slots as u32
 }
 
 #[cfg(test)]
@@ -152,7 +154,8 @@ mod tests {
         bytesrepr::FromBytes, ActivationPoint, BrTableCost, ChainspecRawBytes, ControlFlowCosts,
         CoreConfig, EraId, GlobalStateUpdate, HighwayConfig, HostFunction, HostFunctionCosts,
         MessageLimits, Motes, OpcodeCosts, ProtocolConfig, ProtocolVersion, StorageCosts,
-        StoredValue, TestBlockBuilder, TimeDiff, Timestamp, TransactionConfig, WasmConfig,
+        StoredValue, TestBlockBuilder, TimeDiff, Timestamp, TransactionConfig, TransactionV1Config,
+        WasmConfig, MINT_LANE_ID,
     };
 
     use super::*;
@@ -381,10 +384,14 @@ mod tests {
 
     #[test]
     fn should_have_valid_transaction_counts() {
+        let transaction_v1_config = TransactionV1Config::default();
+
+        let transaction_v1_config =
+            transaction_v1_config.with_count_limits(Some(100), Some(1), None, None);
+
         let transaction_config = TransactionConfig {
             block_max_approval_count: 100,
-            block_max_mint_count: 100,
-            block_max_auction_count: 1,
+            transaction_v1_config,
             ..Default::default()
         };
         assert!(
@@ -393,12 +400,14 @@ mod tests {
             should be invalid"
         );
 
+        let transaction_v1_config = TransactionV1Config::default();
+
+        let transaction_v1_config =
+            transaction_v1_config.with_count_limits(Some(100), Some(50), Some(25), Some(25));
+
         let transaction_config = TransactionConfig {
             block_max_approval_count: 200,
-            block_max_mint_count: 100,
-            block_max_auction_count: 50,
-            block_max_install_upgrade_count: 25,
-            block_max_standard_count: 25,
+            transaction_v1_config,
             ..Default::default()
         };
         assert!(
@@ -406,12 +415,13 @@ mod tests {
             "max approval count equal to sum of `block_max_[txn type]_count`s should be valid"
         );
 
+        let transaction_v1_config = TransactionV1Config::default();
+        let transaction_v1_config =
+            transaction_v1_config.with_count_limits(Some(100), Some(50), Some(25), Some(24));
+
         let transaction_config = TransactionConfig {
             block_max_approval_count: 200,
-            block_max_mint_count: 100,
-            block_max_auction_count: 50,
-            block_max_install_upgrade_count: 25,
-            block_max_standard_count: 24,
+            transaction_v1_config,
             ..Default::default()
         };
         assert!(
@@ -607,10 +617,6 @@ mod tests {
             spec.highway_config.maximum_round_length,
             TimeDiff::from_seconds(525)
         );
-        assert_eq!(
-            spec.highway_config.reduced_reward_multiplier,
-            Ratio::new(1, 5)
-        );
 
         assert_eq!(
             spec.transaction_config.deploy_config.max_payment_cost,
@@ -622,7 +628,12 @@ mod tests {
         );
         assert_eq!(spec.transaction_config.deploy_config.max_dependencies, 11);
         assert_eq!(spec.transaction_config.max_block_size, 12);
-        assert_eq!(spec.transaction_config.block_max_mint_count, 125);
+        assert_eq!(
+            spec.transaction_config
+                .transaction_v1_config
+                .get_max_transaction_count(MINT_LANE_ID),
+            125
+        );
         assert_eq!(spec.transaction_config.block_gas_limit, 13);
 
         assert_eq!(spec.wasm_config, *EXPECTED_GENESIS_WASM_COSTS);

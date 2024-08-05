@@ -27,6 +27,8 @@ const DELEGATE_TAG: u8 = 4;
 const UNDELEGATE_TAG: u8 = 5;
 const REDELEGATE_TAG: u8 = 6;
 const ACTIVATE_BID_TAG: u8 = 7;
+const CHANGE_BID_PUBLIC_KEY_TAG: u8 = 8;
+const CALL_TAG: u8 = 9;
 
 /// The entry point of a [`Transaction`].
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize, Debug)]
@@ -38,6 +40,8 @@ const ACTIVATE_BID_TAG: u8 = 7;
 )]
 #[serde(deny_unknown_fields)]
 pub enum TransactionEntryPoint {
+    /// The standard `call` entry point used in session code.
+    Call,
     /// A non-native, arbitrary entry point.
     Custom(String),
     /// The `transfer` native entry point, used to transfer `Motes` from a source purse to a target
@@ -65,6 +69,8 @@ pub enum TransactionEntryPoint {
     ///   * "public_key": `PublicKey`
     ///   * "delegation_rate": `u8`
     ///   * "amount": `U512`
+    ///   * "minimum_delegation_amount": `u64`
+    ///   * "maximum_delegation_amount": `u64`
     #[cfg_attr(
         feature = "json-schema",
         schemars(
@@ -146,13 +152,26 @@ pub enum TransactionEntryPoint {
         )
     )]
     ActivateBid,
+
+    /// The `change_bid_public_key` native entry point, used to change a bid's public key.
+    ///
+    /// Requires the following runtime args:
+    ///   * "public_key": `PublicKey`
+    ///   * "new_public_key": `PublicKey`
+    #[cfg_attr(
+        feature = "json-schema",
+        schemars(
+            description = "The `change_bid_public_key` native entry point, used to change a bid's public key."
+        )
+    )]
+    ChangeBidPublicKey,
 }
 
 impl TransactionEntryPoint {
     /// Returns a random `TransactionEntryPoint`.
     #[cfg(any(feature = "testing", test))]
     pub fn random(rng: &mut TestRng) -> Self {
-        match rng.gen_range(0..7) {
+        match rng.gen_range(0..10) {
             CUSTOM_TAG => TransactionEntryPoint::Custom(rng.random_string(1..21)),
             TRANSFER_TAG => TransactionEntryPoint::Transfer,
             ADD_BID_TAG => TransactionEntryPoint::AddBid,
@@ -161,6 +180,8 @@ impl TransactionEntryPoint {
             UNDELEGATE_TAG => TransactionEntryPoint::Undelegate,
             REDELEGATE_TAG => TransactionEntryPoint::Redelegate,
             ACTIVATE_BID_TAG => TransactionEntryPoint::ActivateBid,
+            CHANGE_BID_PUBLIC_KEY_TAG => TransactionEntryPoint::ChangeBidPublicKey,
+            CALL_TAG => TransactionEntryPoint::Call,
             _ => unreachable!(),
         }
     }
@@ -171,11 +192,13 @@ impl TransactionEntryPoint {
             TransactionEntryPoint::AddBid
             | TransactionEntryPoint::Delegate
             | TransactionEntryPoint::Custom(_)
+            | TransactionEntryPoint::Call
             | TransactionEntryPoint::Transfer => true,
             TransactionEntryPoint::WithdrawBid
             | TransactionEntryPoint::Undelegate
             | TransactionEntryPoint::Redelegate
-            | TransactionEntryPoint::ActivateBid => false,
+            | TransactionEntryPoint::ActivateBid
+            | TransactionEntryPoint::ChangeBidPublicKey => false,
         }
     }
 }
@@ -183,6 +206,7 @@ impl TransactionEntryPoint {
 impl Display for TransactionEntryPoint {
     fn fmt(&self, formatter: &mut Formatter) -> fmt::Result {
         match self {
+            TransactionEntryPoint::Call => write!(formatter, "call"),
             TransactionEntryPoint::Custom(entry_point) => {
                 write!(formatter, "custom({entry_point})")
             }
@@ -193,6 +217,7 @@ impl Display for TransactionEntryPoint {
             TransactionEntryPoint::Undelegate => write!(formatter, "undelegate"),
             TransactionEntryPoint::Redelegate => write!(formatter, "redelegate"),
             TransactionEntryPoint::ActivateBid => write!(formatter, "activate_bid"),
+            TransactionEntryPoint::ChangeBidPublicKey => write!(formatter, "change_bid_public_key"),
         }
     }
 }
@@ -200,6 +225,7 @@ impl Display for TransactionEntryPoint {
 impl ToBytes for TransactionEntryPoint {
     fn write_bytes(&self, writer: &mut Vec<u8>) -> Result<(), bytesrepr::Error> {
         match self {
+            TransactionEntryPoint::Call => CALL_TAG.write_bytes(writer),
             TransactionEntryPoint::Custom(entry_point) => {
                 CUSTOM_TAG.write_bytes(writer)?;
                 entry_point.write_bytes(writer)
@@ -211,6 +237,9 @@ impl ToBytes for TransactionEntryPoint {
             TransactionEntryPoint::Undelegate => UNDELEGATE_TAG.write_bytes(writer),
             TransactionEntryPoint::Redelegate => REDELEGATE_TAG.write_bytes(writer),
             TransactionEntryPoint::ActivateBid => ACTIVATE_BID_TAG.write_bytes(writer),
+            TransactionEntryPoint::ChangeBidPublicKey => {
+                CHANGE_BID_PUBLIC_KEY_TAG.write_bytes(writer)
+            }
         }
     }
 
@@ -224,13 +253,15 @@ impl ToBytes for TransactionEntryPoint {
         U8_SERIALIZED_LENGTH
             + match self {
                 TransactionEntryPoint::Custom(entry_point) => entry_point.serialized_length(),
-                TransactionEntryPoint::Transfer
+                TransactionEntryPoint::Call
+                | TransactionEntryPoint::Transfer
                 | TransactionEntryPoint::AddBid
                 | TransactionEntryPoint::WithdrawBid
                 | TransactionEntryPoint::Delegate
                 | TransactionEntryPoint::Undelegate
                 | TransactionEntryPoint::Redelegate
-                | TransactionEntryPoint::ActivateBid => 0,
+                | TransactionEntryPoint::ActivateBid
+                | TransactionEntryPoint::ChangeBidPublicKey => 0,
             }
     }
 }
@@ -239,6 +270,7 @@ impl FromBytes for TransactionEntryPoint {
     fn from_bytes(bytes: &[u8]) -> Result<(Self, &[u8]), bytesrepr::Error> {
         let (tag, remainder) = u8::from_bytes(bytes)?;
         match tag {
+            CALL_TAG => Ok((TransactionEntryPoint::Call, remainder)),
             CUSTOM_TAG => {
                 let (entry_point, remainder) = String::from_bytes(remainder)?;
                 Ok((TransactionEntryPoint::Custom(entry_point), remainder))
@@ -250,6 +282,7 @@ impl FromBytes for TransactionEntryPoint {
             UNDELEGATE_TAG => Ok((TransactionEntryPoint::Undelegate, remainder)),
             REDELEGATE_TAG => Ok((TransactionEntryPoint::Redelegate, remainder)),
             ACTIVATE_BID_TAG => Ok((TransactionEntryPoint::ActivateBid, remainder)),
+            CHANGE_BID_PUBLIC_KEY_TAG => Ok((TransactionEntryPoint::ChangeBidPublicKey, remainder)),
             _ => Err(bytesrepr::Error::Formatting),
         }
     }
@@ -277,6 +310,9 @@ impl From<&str> for TransactionEntryPoint {
         }
         if value.to_lowercase() == auction::METHOD_REDELEGATE {
             return TransactionEntryPoint::Redelegate;
+        }
+        if value.to_lowercase() == auction::METHOD_CHANGE_BID_PUBLIC_KEY {
+            return TransactionEntryPoint::ChangeBidPublicKey;
         }
         TransactionEntryPoint::Custom(value.to_string())
     }

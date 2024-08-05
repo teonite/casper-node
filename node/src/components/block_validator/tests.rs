@@ -8,7 +8,8 @@ use casper_types::{
     bytesrepr::Bytes, runtime_args, system::standard_payment::ARG_AMOUNT, testing::TestRng, Block,
     BlockSignatures, BlockSignaturesV2, Chainspec, ChainspecRawBytes, Deploy, ExecutableDeployItem,
     FinalitySignatureV2, RuntimeArgs, SecretKey, TestBlockBuilder, TimeDiff, Transaction,
-    TransactionV1, U512,
+    TransactionV1, TransactionV1Config, AUCTION_LANE_ID, INSTALL_UPGRADE_LANE_ID, MINT_LANE_ID,
+    U512,
 };
 
 use crate::{
@@ -24,6 +25,8 @@ use crate::{
 
 use super::*;
 
+const LARGE_LANE_ID: u8 = 3;
+
 #[derive(Debug, From)]
 enum ReactorEvent {
     #[from]
@@ -35,7 +38,7 @@ enum ReactorEvent {
     #[from]
     Storage(StorageRequest),
     #[from]
-    FatalAnnouncement(FatalAnnouncement),
+    FatalAnnouncement(#[allow(dead_code)] FatalAnnouncement),
 }
 
 impl From<BlockValidationRequest> for ReactorEvent {
@@ -142,34 +145,13 @@ pub(super) fn new_proposed_block_with_cited_signatures(
     let block_context = BlockContext::new(timestamp, vec![]);
     let transactions = {
         let mut ret = BTreeMap::new();
+        ret.insert(MINT_LANE_ID, transfer.into_iter().collect());
+        ret.insert(AUCTION_LANE_ID, staking.into_iter().collect());
         ret.insert(
-            TransactionCategory::Mint,
-            transfer
-                .into_iter()
-                .map(|(txn_hash, approvals)| (txn_hash, approvals))
-                .collect(),
+            INSTALL_UPGRADE_LANE_ID,
+            install_upgrade.into_iter().collect(),
         );
-        ret.insert(
-            TransactionCategory::Auction,
-            staking
-                .into_iter()
-                .map(|(txn_hash, approvals)| (txn_hash, approvals))
-                .collect(),
-        );
-        ret.insert(
-            TransactionCategory::InstallUpgrade,
-            install_upgrade
-                .into_iter()
-                .map(|(txn_hash, approvals)| (txn_hash, approvals))
-                .collect(),
-        );
-        ret.insert(
-            TransactionCategory::Standard,
-            standard
-                .into_iter()
-                .map(|(txn_hash, approvals)| (txn_hash, approvals))
-                .collect(),
-        );
+        ret.insert(LARGE_LANE_ID, standard.into_iter().collect());
         ret
     };
     let block_payload = BlockPayload::new(transactions, vec![], cited_signatures, true);
@@ -198,11 +180,11 @@ pub(super) fn new_v1_standard(
     timestamp: Timestamp,
     ttl: TimeDiff,
 ) -> TransactionV1 {
-    TransactionV1::random_standard(rng, Some(timestamp), Some(ttl))
+    TransactionV1::random_wasm(rng, Some(timestamp), Some(ttl))
 }
 
 pub(super) fn new_auction(rng: &mut TestRng, timestamp: Timestamp, ttl: TimeDiff) -> TransactionV1 {
-    TransactionV1::random_staking(rng, Some(timestamp), Some(ttl))
+    TransactionV1::random_auction(rng, Some(timestamp), Some(ttl))
 }
 
 pub(super) fn new_install_upgrade(
@@ -372,7 +354,7 @@ impl ValidationContext {
         era: EraId,
     ) -> Self {
         self.past_blocks
-            .extend((min_height..=max_height).into_iter().map(|height| {
+            .extend((min_height..=max_height).map(|height| {
                 let block = TestBlockBuilder::new().height(height).era(era).build(rng);
                 (height, block.into())
             }));
@@ -391,7 +373,7 @@ impl ValidationContext {
         era: EraId,
     ) -> Self {
         self.delayed_blocks
-            .extend((min_height..=max_height).into_iter().map(|height| {
+            .extend((min_height..=max_height).map(|height| {
                 let block = TestBlockBuilder::new().height(height).era(era).build(rng);
                 (height, block.into())
             }));
@@ -596,7 +578,6 @@ impl ValidationContext {
             .map(|proposed_block_height| {
                 RewardedSignatures::new(
                     (1..=rewards_window)
-                        .into_iter()
                         .filter_map(|height_diff| proposed_block_height.checked_sub(height_diff))
                         .map(|height| {
                             let signing_validators = self
@@ -1019,7 +1000,17 @@ async fn should_fetch_from_multiple_peers() {
         let reactor = MockReactor::new(signer, vec![public_key]);
         let effect_builder =
             EffectBuilder::new(EventQueueHandle::without_shutdown(reactor.scheduler));
-        let (chainspec, _) = <(Chainspec, ChainspecRawBytes)>::from_resources("local");
+        let (mut chainspec, _) = <(Chainspec, ChainspecRawBytes)>::from_resources("local");
+
+        chainspec.transaction_config.block_gas_limit = 100_000_000_000_000;
+        let transaction_v1_config = TransactionV1Config::default().with_count_limits(
+            Some(3000),
+            Some(3000),
+            Some(3000),
+            Some(3000),
+        );
+        chainspec.transaction_config.transaction_v1_config = transaction_v1_config;
+
         let mut block_validator = BlockValidator::new(
             Arc::new(chainspec),
             reactor.validator_matrix.clone(),

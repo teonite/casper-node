@@ -6,11 +6,14 @@ use crate::{
         METHOD_GET_ERA_VALIDATORS, METHOD_READ_ERA_ID, METHOD_REDELEGATE, METHOD_RUN_AUCTION,
         METHOD_SLASH, METHOD_UNDELEGATE, METHOD_WITHDRAW_BID,
     },
-    CLType, CLTyped, EntryPoint, EntryPointAccess, EntryPointType, EntryPoints, Parameter,
-    PublicKey, U512,
+    CLType, CLTyped, EntryPoint, EntryPointAccess, EntryPointPayment, EntryPointType, EntryPoints,
+    Parameter, PublicKey, U512,
 };
 
-use super::ARG_REWARDS_MAP;
+use super::{
+    ARG_MAXIMUM_DELEGATION_AMOUNT, ARG_MINIMUM_DELEGATION_AMOUNT, ARG_NEW_PUBLIC_KEY,
+    ARG_REWARDS_MAP, METHOD_CHANGE_BID_PUBLIC_KEY,
+};
 
 /// Creates auction contract entry points.
 pub fn auction_entry_points() -> EntryPoints {
@@ -22,6 +25,7 @@ pub fn auction_entry_points() -> EntryPoints {
         Option::<ValidatorWeights>::cl_type(),
         EntryPointAccess::Public,
         EntryPointType::Called,
+        EntryPointPayment::Caller,
     );
     entry_points.add_entry_point(entry_point);
 
@@ -31,10 +35,13 @@ pub fn auction_entry_points() -> EntryPoints {
             Parameter::new(ARG_PUBLIC_KEY, PublicKey::cl_type()),
             Parameter::new(ARG_DELEGATION_RATE, DelegationRate::cl_type()),
             Parameter::new(ARG_AMOUNT, U512::cl_type()),
+            Parameter::new(ARG_MINIMUM_DELEGATION_AMOUNT, u64::cl_type()),
+            Parameter::new(ARG_MAXIMUM_DELEGATION_AMOUNT, u64::cl_type()),
         ],
         U512::cl_type(),
         EntryPointAccess::Public,
         EntryPointType::Called,
+        EntryPointPayment::Caller,
     );
     entry_points.add_entry_point(entry_point);
 
@@ -47,6 +54,7 @@ pub fn auction_entry_points() -> EntryPoints {
         U512::cl_type(),
         EntryPointAccess::Public,
         EntryPointType::Called,
+        EntryPointPayment::Caller,
     );
     entry_points.add_entry_point(entry_point);
 
@@ -60,6 +68,7 @@ pub fn auction_entry_points() -> EntryPoints {
         U512::cl_type(),
         EntryPointAccess::Public,
         EntryPointType::Called,
+        EntryPointPayment::Caller,
     );
     entry_points.add_entry_point(entry_point);
 
@@ -73,6 +82,7 @@ pub fn auction_entry_points() -> EntryPoints {
         U512::cl_type(),
         EntryPointAccess::Public,
         EntryPointType::Called,
+        EntryPointPayment::Caller,
     );
     entry_points.add_entry_point(entry_point);
 
@@ -87,6 +97,7 @@ pub fn auction_entry_points() -> EntryPoints {
         U512::cl_type(),
         EntryPointAccess::Public,
         EntryPointType::Called,
+        EntryPointPayment::Caller,
     );
     entry_points.add_entry_point(entry_point);
 
@@ -96,6 +107,7 @@ pub fn auction_entry_points() -> EntryPoints {
         CLType::Unit,
         EntryPointAccess::Public,
         EntryPointType::Called,
+        EntryPointPayment::Caller,
     );
     entry_points.add_entry_point(entry_point);
 
@@ -105,6 +117,7 @@ pub fn auction_entry_points() -> EntryPoints {
         CLType::Unit,
         EntryPointAccess::Public,
         EntryPointType::Called,
+        EntryPointPayment::Caller,
     );
     entry_points.add_entry_point(entry_point);
 
@@ -117,6 +130,7 @@ pub fn auction_entry_points() -> EntryPoints {
         CLType::Unit,
         EntryPointAccess::Public,
         EntryPointType::Called,
+        EntryPointPayment::Caller,
     );
     entry_points.add_entry_point(entry_point);
 
@@ -126,6 +140,7 @@ pub fn auction_entry_points() -> EntryPoints {
         CLType::U64,
         EntryPointAccess::Public,
         EntryPointType::Called,
+        EntryPointPayment::Caller,
     );
     entry_points.add_entry_point(entry_point);
 
@@ -135,6 +150,20 @@ pub fn auction_entry_points() -> EntryPoints {
         CLType::Unit,
         EntryPointAccess::Public,
         EntryPointType::Called,
+        EntryPointPayment::Caller,
+    );
+    entry_points.add_entry_point(entry_point);
+
+    let entry_point = EntryPoint::new(
+        METHOD_CHANGE_BID_PUBLIC_KEY,
+        vec![
+            Parameter::new(ARG_PUBLIC_KEY, PublicKey::cl_type()),
+            Parameter::new(ARG_NEW_PUBLIC_KEY, PublicKey::cl_type()),
+        ],
+        CLType::Unit,
+        EntryPointAccess::Public,
+        EntryPointType::Called,
+        EntryPointPayment::Caller,
     );
     entry_points.add_entry_point(entry_point);
 

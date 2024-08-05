@@ -199,7 +199,7 @@ impl<REv: 'static + Debug> ComponentHarnessBuilder<REv> {
             }
         };
 
-        let rng = self.rng.unwrap_or_else(TestRng::new);
+        let rng = self.rng.unwrap_or_default();
 
         let scheduler = Box::leak(Box::new(Scheduler::new(QueueKind::weights(), None)));
         let event_queue_handle = EventQueueHandle::without_shutdown(scheduler);
@@ -364,7 +364,7 @@ pub(crate) enum UnitTestEvent {
     FatalAnnouncement(FatalAnnouncement),
     /// A network request made by the component under test.
     #[from]
-    NetworkRequest(NetworkRequest<Message>),
+    NetworkRequest(#[allow(dead_code)] NetworkRequest<Message>),
 }
 
 impl ReactorEvent for UnitTestEvent {

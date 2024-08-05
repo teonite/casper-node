@@ -26,9 +26,9 @@ use casper_types::{
     ChunkWithProof, Deploy, DeployHash, DeployId, Digest, EraEndV1, EraEndV2, EraId, EraReport,
     ExecutableDeployItem, FinalitySignature, FinalitySignatureId, FinalitySignatureV2, PackageHash,
     ProtocolVersion, RewardedSignatures, RuntimeArgs, SecretKey, SemVer, SignedBlockHeader,
-    SingleBlockRewardedSignatures, TimeDiff, Timestamp, Transaction, TransactionCategory,
-    TransactionHash, TransactionId, TransactionSessionKind, TransactionV1, TransactionV1Builder,
-    TransactionV1Hash, URef, KEY_HASH_LENGTH, U512,
+    SingleBlockRewardedSignatures, TimeDiff, Timestamp, Transaction, TransactionHash,
+    TransactionId, TransactionV1, TransactionV1Builder, TransactionV1Hash, URef, AUCTION_LANE_ID,
+    INSTALL_UPGRADE_LANE_ID, KEY_HASH_LENGTH, MINT_LANE_ID, U512,
 };
 
 use crate::{
@@ -47,6 +47,8 @@ use casper_storage::block_store::types::ApprovalsHashes;
 /// The largest valid unicode codepoint that can be encoded to UTF-8.
 pub(crate) const HIGHEST_UNICODE_CODEPOINT: char = '\u{10FFFF}';
 
+const LARGE_LANE_ID: u8 = 3;
+
 /// A cache used for memoization, typically on a single estimator.
 #[derive(Debug, Default)]
 pub(crate) struct Cache {
@@ -58,7 +60,7 @@ impl Cache {
     /// Retrieves a potentially memoized instance.
     pub(crate) fn get<T: Any>(&mut self) -> Option<&T> {
         self.get_all::<T>()
-            .get(0)
+            .first()
             .map(|box_any| box_any.downcast_ref::<T>().expect("cache corrupted"))
     }
 
@@ -573,6 +575,8 @@ impl LargestSpecimen for BlockHeaderV2 {
             LargestSpecimen::largest_specimen(estimator, cache),
             LargestSpecimen::largest_specimen(estimator, cache),
             LargestSpecimen::largest_specimen(estimator, cache),
+            LargestSpecimen::largest_specimen(estimator, cache),
+            LargestSpecimen::largest_specimen(estimator, cache),
             OnceCell::with_value(LargestSpecimen::largest_specimen(estimator, cache)),
         )
     }
@@ -615,6 +619,8 @@ impl LargestSpecimen for BlockHeaderWithoutEraEnd {
             LargestSpecimen::largest_specimen(estimator, cache),
             LargestSpecimen::largest_specimen(estimator, cache),
             LargestSpecimen::largest_specimen(estimator, cache),
+            LargestSpecimen::largest_specimen(estimator, cache),
+            LargestSpecimen::largest_specimen(estimator, cache),
             OnceCell::with_value(LargestSpecimen::largest_specimen(estimator, cache)),
         ))
     }
@@ -631,11 +637,20 @@ impl LargestSpecimen for EraEndV1 {
 
 impl LargestSpecimen for EraEndV2 {
     fn largest_specimen<E: SizeEstimator>(estimator: &E, cache: &mut Cache) -> Self {
+        let rewards = {
+            let count = estimator.parameter("validator_count");
+
+            PublicKey::large_unique_sequence(estimator, count, cache)
+                .into_iter()
+                // at most two reward amounts per validator
+                .map(|key| (key, vec_of_largest_specimen(estimator, 2, cache)))
+                .collect()
+        };
         EraEndV2::new(
             vec_prop_specimen(estimator, "validator_count", cache),
             vec_prop_specimen(estimator, "validator_count", cache),
             btree_map_distinct_from_prop(estimator, "validator_count", cache),
-            btree_map_distinct_from_prop(estimator, "validator_count", cache),
+            rewards,
             1u8,
         )
     }
@@ -677,11 +692,11 @@ impl LargestSpecimen for BlockSignatures {
 
 impl LargestSpecimen for BlockV2 {
     fn largest_specimen<E: SizeEstimator>(estimator: &E, cache: &mut Cache) -> Self {
-        let transfer_hashes = vec![
+        let mint_hashes = vec![
             TransactionHash::largest_specimen(estimator, cache);
             estimator.parameter::<usize>("max_mint_per_block")
         ];
-        let staking_hashes = vec![
+        let auction_hashes = vec![
             TransactionHash::largest_specimen(estimator, cache);
             estimator.parameter::<usize>("max_auctions_per_block")
         ];
@@ -696,6 +711,15 @@ impl LargestSpecimen for BlockV2 {
                 .parameter::<usize>("max_standard_transactions_per_block")
         ];
 
+        let transactions = {
+            let mut ret = BTreeMap::new();
+            ret.insert(MINT_LANE_ID, mint_hashes);
+            ret.insert(AUCTION_LANE_ID, auction_hashes);
+            ret.insert(INSTALL_UPGRADE_LANE_ID, install_upgrade_hashes);
+            ret.insert(3, standard_hashes);
+            ret
+        };
+
         BlockV2::new(
             LargestSpecimen::largest_specimen(estimator, cache),
             LargestSpecimen::largest_specimen(estimator, cache),
@@ -707,10 +731,8 @@ impl LargestSpecimen for BlockV2 {
             LargestSpecimen::largest_specimen(estimator, cache),
             LargestSpecimen::largest_specimen(estimator, cache),
             LargestSpecimen::largest_specimen(estimator, cache),
-            transfer_hashes,
-            staking_hashes,
-            install_upgrade_hashes,
-            standard_hashes,
+            transactions,
+            LargestSpecimen::largest_specimen(estimator, cache),
             LargestSpecimen::largest_specimen(estimator, cache),
             LargestSpecimen::largest_specimen(estimator, cache),
         )
@@ -824,28 +846,28 @@ impl LargestSpecimen for BlockPayload {
 
         let mut transactions = BTreeMap::new();
         transactions.insert(
-            TransactionCategory::Mint,
+            MINT_LANE_ID,
             vec![
                 large_txn_hash_with_approvals.clone();
                 estimator.parameter::<usize>("max_mint_per_block")
             ],
         );
         transactions.insert(
-            TransactionCategory::Auction,
+            AUCTION_LANE_ID,
             vec![
                 large_txn_hash_with_approvals.clone();
                 estimator.parameter::<usize>("max_auctions_per_block")
             ],
         );
         transactions.insert(
-            TransactionCategory::Standard,
+            LARGE_LANE_ID,
             vec![
                 large_txn_hash_with_approvals.clone();
                 estimator.parameter::<usize>("max_standard_transactions_per_block")
             ],
         );
         transactions.insert(
-            TransactionCategory::InstallUpgrade,
+            INSTALL_UPGRADE_LANE_ID,
             vec![
                 large_txn_hash_with_approvals;
                 estimator.parameter::<usize>("max_install_upgrade_transactions_per_block")
@@ -993,13 +1015,12 @@ impl LargestSpecimen for TransactionV1 {
             estimator.parameter::<i32>("max_transaction_size").max(0) as usize + 10 * 4;
 
         TransactionV1Builder::new_session(
-            TransactionSessionKind::Installer,
+            casper_types::TransactionCategory::InstallUpgrade,
             Bytes::from(vec_of_largest_specimen(
                 estimator,
                 max_size_with_margin,
                 cache,
             )),
-            "a",
         )
         .with_secret_key(&LargestSpecimen::largest_specimen(estimator, cache))
         .with_timestamp(LargestSpecimen::largest_specimen(estimator, cache))

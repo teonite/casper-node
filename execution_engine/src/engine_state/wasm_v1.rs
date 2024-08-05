@@ -1,4 +1,7 @@
-use std::{collections::BTreeSet, convert::TryFrom};
+use std::{
+    collections::BTreeSet,
+    convert::{TryFrom, TryInto},
+};
 
 use serde::Serialize;
 use thiserror::Error;
@@ -7,8 +10,8 @@ use casper_storage::data_access_layer::TransferResult;
 use casper_types::{
     account::AccountHash, bytesrepr::Bytes, contract_messages::Messages, execution::Effects,
     BlockTime, DeployHash, Digest, ExecutableDeployItem, Gas, InitiatorAddr, Phase, PricingMode,
-    RuntimeArgs, Transaction, TransactionEntryPoint, TransactionHash, TransactionInvocationTarget,
-    TransactionSessionKind, TransactionTarget, TransactionV1, Transfer,
+    RuntimeArgs, Transaction, TransactionCategory, TransactionEntryPoint, TransactionHash,
+    TransactionInvocationTarget, TransactionTarget, TransactionV1, Transfer,
 };
 
 use crate::engine_state::{DeployItem, Error as EngineError};
@@ -33,6 +36,15 @@ pub enum InvalidRequest {
     /// Invalid target.
     #[error("invalid target for {0} attempting {1}")]
     InvalidTarget(TransactionHash, String),
+    /// Unsupported category.
+    #[error("invalid category for {0} attempting {1}")]
+    InvalidCategory(TransactionHash, String),
+}
+
+#[derive(Debug, Clone)]
+pub enum SessionKind {
+    InstallUpgradeBytecode,
+    GenericBytecode,
 }
 
 /// The item to be executed.
@@ -45,7 +57,7 @@ pub enum ExecutableItem {
     /// Session byte code.
     SessionBytes {
         /// The kind of session.
-        kind: TransactionSessionKind,
+        kind: SessionKind,
         /// The compiled Wasm.
         module_bytes: Bytes,
     },
@@ -482,24 +494,55 @@ impl TryFrom<&TransactionV1> for SessionInfo {
                     v1_txn.target().to_string(),
                 ));
             }
-            TransactionTarget::Stored { id, .. } => ExecutableItem::Invocation(id.clone()),
-            TransactionTarget::Session {
-                kind, module_bytes, ..
-            } => ExecutableItem::SessionBytes {
-                kind: *kind,
-                module_bytes: module_bytes.clone(),
-            },
+            TransactionTarget::Stored { id, .. } => {
+                let TransactionEntryPoint::Custom(entry_point) = v1_txn.entry_point() else {
+                    return Err(InvalidRequest::InvalidEntryPoint(transaction_hash, v1_txn.entry_point().to_string()));
+                };
+                let item = ExecutableItem::Invocation(id.clone());
+                ExecutableInfo {
+                    item,
+                    entry_point: entry_point.clone(),
+                    args,
+                }
+            }
+            TransactionTarget::Session { module_bytes, .. } => {
+                if *v1_txn.entry_point() != TransactionEntryPoint::Call {
+                    return Err(InvalidRequest::InvalidEntryPoint(
+                        transaction_hash,
+                        v1_txn.entry_point().to_string(),
+                    ));
+                };
+                let category = v1_txn.transaction_category();
+                let category: TransactionCategory = category.try_into().map_err(|_| {
+                    InvalidRequest::InvalidCategory(transaction_hash, category.to_string())
+                })?;
+                let item = match category {
+                    TransactionCategory::InstallUpgrade => ExecutableItem::SessionBytes {
+                        kind: SessionKind::InstallUpgradeBytecode,
+                        module_bytes: module_bytes.clone(),
+                    },
+                    TransactionCategory::Large
+                    | TransactionCategory::Medium
+                    | TransactionCategory::Small => ExecutableItem::SessionBytes {
+                        kind: SessionKind::GenericBytecode,
+                        module_bytes: module_bytes.clone(),
+                    },
+                    _ => {
+                        return Err(InvalidRequest::InvalidCategory(
+                            transaction_hash,
+                            category.to_string(),
+                        ))
+                    }
+                };
+                ExecutableInfo {
+                    item,
+                    entry_point: DEFAULT_ENTRY_POINT.to_owned(),
+                    args,
+                }
+            }
         };
 
-        let TransactionEntryPoint::Custom(entry_point) = v1_txn.entry_point() else {
-            return Err(InvalidRequest::InvalidEntryPoint(transaction_hash, v1_txn.entry_point().to_string()));
-        };
-
-        Ok(SessionInfo(ExecutableInfo {
-            item: session,
-            entry_point: entry_point.clone(),
-            args,
-        }))
+        Ok(SessionInfo(session))
     }
 }
 
@@ -625,7 +668,18 @@ impl TryFrom<&TransactionV1> for PaymentInfo {
 
         let payment = match v1_txn.target() {
             TransactionTarget::Session { module_bytes, .. } => {
-                ExecutableItem::PaymentBytes(module_bytes.clone())
+                if *v1_txn.entry_point() != TransactionEntryPoint::Call {
+                    return Err(InvalidRequest::InvalidEntryPoint(
+                        transaction_hash,
+                        v1_txn.entry_point().to_string(),
+                    ));
+                };
+                let item = ExecutableItem::PaymentBytes(module_bytes.clone());
+                ExecutableInfo {
+                    item,
+                    entry_point: DEFAULT_ENTRY_POINT.to_owned(),
+                    args: v1_txn.args().clone(),
+                }
             }
             TransactionTarget::Native | TransactionTarget::Stored { .. } => {
                 return Err(InvalidRequest::InvalidTarget(
@@ -634,13 +688,7 @@ impl TryFrom<&TransactionV1> for PaymentInfo {
                 ));
             }
         };
-        let TransactionEntryPoint::Custom(entry_point) = v1_txn.entry_point().clone() else {
-            return Err(InvalidRequest::InvalidEntryPoint(transaction_hash, v1_txn.entry_point().to_string()));
-        };
-        Ok(PaymentInfo(ExecutableInfo {
-            item: payment,
-            entry_point,
-            args: v1_txn.args().clone(),
-        }))
+
+        Ok(PaymentInfo(payment))
     }
 }

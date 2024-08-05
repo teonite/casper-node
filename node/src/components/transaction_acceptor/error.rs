@@ -50,7 +50,7 @@ pub(crate) enum Error {
     ExpectedDeploy,
 
     /// Component state error: expected a version 1 transaction.
-    #[error("internal error: expected a deploy")]
+    #[error("internal error: expected a transaction")]
     ExpectedTransactionV1,
 }
 
@@ -68,12 +68,61 @@ impl Error {
 impl From<Error> for BinaryPortErrorCode {
     fn from(err: Error) -> Self {
         match err {
-            Error::EmptyBlockchain
-            | Error::InvalidTransaction(_)
-            | Error::Parameters { .. }
-            | Error::Expired { .. }
-            | Error::ExpectedDeploy
-            | Error::ExpectedTransactionV1 => BinaryPortErrorCode::InvalidTransaction,
+            Error::EmptyBlockchain => BinaryPortErrorCode::EmptyBlockchain,
+            Error::ExpectedDeploy => BinaryPortErrorCode::ExpectedDeploy,
+            Error::ExpectedTransactionV1 => BinaryPortErrorCode::ExpectedTransaction,
+            Error::Expired { .. } => BinaryPortErrorCode::TransactionExpired,
+            Error::Parameters { failure, .. } => match failure {
+                ParameterFailure::NoSuchAddressableEntity { .. } => {
+                    BinaryPortErrorCode::NoSuchAddressableEntity
+                }
+                ParameterFailure::NoSuchContractAtHash { .. } => {
+                    BinaryPortErrorCode::NoSuchContractAtHash
+                }
+                ParameterFailure::NoSuchEntryPoint { .. } => BinaryPortErrorCode::NoSuchEntryPoint,
+                ParameterFailure::NoSuchPackageAtHash { .. } => {
+                    BinaryPortErrorCode::NoSuchPackageAtHash
+                }
+                ParameterFailure::InvalidEntityAtVersion { .. } => {
+                    BinaryPortErrorCode::InvalidEntityAtVersion
+                }
+                ParameterFailure::DisabledEntityAtVersion { .. } => {
+                    BinaryPortErrorCode::DisabledEntityAtVersion
+                }
+                ParameterFailure::MissingEntityAtVersion { .. } => {
+                    BinaryPortErrorCode::MissingEntityAtVersion
+                }
+                ParameterFailure::InvalidAssociatedKeys => {
+                    BinaryPortErrorCode::InvalidAssociatedKeys
+                }
+                ParameterFailure::InsufficientSignatureWeight => {
+                    BinaryPortErrorCode::InsufficientSignatureWeight
+                }
+                ParameterFailure::InsufficientBalance { .. } => {
+                    BinaryPortErrorCode::InsufficientBalance
+                }
+                ParameterFailure::UnknownBalance { .. } => BinaryPortErrorCode::UnknownBalance,
+                ParameterFailure::Deploy(deploy_failure) => match deploy_failure {
+                    DeployParameterFailure::InvalidPaymentVariant => {
+                        BinaryPortErrorCode::DeployInvalidPaymentVariant
+                    }
+                    DeployParameterFailure::MissingPaymentAmount => {
+                        BinaryPortErrorCode::DeployMissingPaymentAmount
+                    }
+                    DeployParameterFailure::FailedToParsePaymentAmount => {
+                        BinaryPortErrorCode::DeployFailedToParsePaymentAmount
+                    }
+                    DeployParameterFailure::MissingTransferTarget => {
+                        BinaryPortErrorCode::DeployMissingTransferTarget
+                    }
+                    DeployParameterFailure::MissingModuleBytes => {
+                        BinaryPortErrorCode::DeployMissingModuleBytes
+                    }
+                },
+            },
+            Error::InvalidTransaction(invalid_transaction) => {
+                BinaryPortErrorCode::from(invalid_transaction)
+            }
         }
     }
 }

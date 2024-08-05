@@ -8,20 +8,18 @@ use rand::Rng;
 use super::{
     super::{
         InitiatorAddr, TransactionEntryPoint, TransactionInvocationTarget, TransactionRuntime,
-        TransactionScheduling, TransactionSessionKind, TransactionTarget,
+        TransactionScheduling, TransactionTarget,
     },
     transaction_v1_body::arg_handling,
     InitiatorAddrAndSecretKey, PricingMode, TransactionV1, TransactionV1Body,
 };
 use crate::{
-    bytesrepr::Bytes, AddressableEntityHash, CLValue, CLValueError, EntityVersion, PackageHash,
-    PublicKey, RuntimeArgs, SecretKey, TimeDiff, Timestamp, TransferTarget, URef, U512,
+    bytesrepr::Bytes, transaction::TransactionCategory, AddressableEntityHash, CLValue,
+    CLValueError, EntityVersion, PackageHash, PublicKey, RuntimeArgs, SecretKey, TimeDiff,
+    Timestamp, TransferTarget, URef, U512,
 };
 #[cfg(any(feature = "testing", test))]
-use crate::{
-    testing::TestRng, transaction::Approval, TransactionCategory, TransactionConfig,
-    TransactionV1Hash,
-};
+use crate::{testing::TestRng, transaction::Approval, TransactionConfig, TransactionV1Hash};
 pub use error::TransactionV1BuilderError;
 
 /// A builder for constructing a [`TransactionV1`].
@@ -92,6 +90,7 @@ impl<'a> TransactionV1Builder<'a> {
             args,
             TransactionTarget::Native,
             TransactionEntryPoint::Transfer,
+            TransactionCategory::Mint as u8,
             Self::DEFAULT_SCHEDULING,
         );
         Ok(TransactionV1Builder::new(body))
@@ -102,12 +101,21 @@ impl<'a> TransactionV1Builder<'a> {
         public_key: PublicKey,
         delegation_rate: u8,
         amount: A,
+        minimum_delegation_amount: u64,
+        maximum_delegation_amount: u64,
     ) -> Result<Self, CLValueError> {
-        let args = arg_handling::new_add_bid_args(public_key, delegation_rate, amount)?;
+        let args = arg_handling::new_add_bid_args(
+            public_key,
+            delegation_rate,
+            amount,
+            minimum_delegation_amount,
+            maximum_delegation_amount,
+        )?;
         let body = TransactionV1Body::new(
             args,
             TransactionTarget::Native,
             TransactionEntryPoint::AddBid,
+            TransactionCategory::Auction as u8,
             Self::DEFAULT_SCHEDULING,
         );
         Ok(TransactionV1Builder::new(body))
@@ -124,6 +132,7 @@ impl<'a> TransactionV1Builder<'a> {
             args,
             TransactionTarget::Native,
             TransactionEntryPoint::WithdrawBid,
+            TransactionCategory::Auction as u8,
             Self::DEFAULT_SCHEDULING,
         );
         Ok(TransactionV1Builder::new(body))
@@ -140,6 +149,7 @@ impl<'a> TransactionV1Builder<'a> {
             args,
             TransactionTarget::Native,
             TransactionEntryPoint::Delegate,
+            TransactionCategory::Auction as u8,
             Self::DEFAULT_SCHEDULING,
         );
         Ok(TransactionV1Builder::new(body))
@@ -156,6 +166,7 @@ impl<'a> TransactionV1Builder<'a> {
             args,
             TransactionTarget::Native,
             TransactionEntryPoint::Undelegate,
+            TransactionCategory::Auction as u8,
             Self::DEFAULT_SCHEDULING,
         );
         Ok(TransactionV1Builder::new(body))
@@ -173,6 +184,7 @@ impl<'a> TransactionV1Builder<'a> {
             args,
             TransactionTarget::Native,
             TransactionEntryPoint::Redelegate,
+            TransactionCategory::Auction as u8,
             Self::DEFAULT_SCHEDULING,
         );
         Ok(TransactionV1Builder::new(body))
@@ -190,6 +202,7 @@ impl<'a> TransactionV1Builder<'a> {
             RuntimeArgs::new(),
             target,
             TransactionEntryPoint::Custom(entry_point.into()),
+            TransactionCategory::Large as u8,
             Self::DEFAULT_SCHEDULING,
         );
         TransactionV1Builder::new(body)
@@ -239,20 +252,16 @@ impl<'a> TransactionV1Builder<'a> {
 
     /// Returns a new `TransactionV1Builder` suitable for building a transaction for running session
     /// logic, i.e. compiled Wasm.
-    pub fn new_session<E: Into<String>>(
-        kind: TransactionSessionKind,
-        module_bytes: Bytes,
-        entry_point: E,
-    ) -> Self {
+    pub fn new_session(category: TransactionCategory, module_bytes: Bytes) -> Self {
         let target = TransactionTarget::Session {
-            kind,
             module_bytes,
             runtime: Self::DEFAULT_RUNTIME,
         };
         let body = TransactionV1Body::new(
             RuntimeArgs::new(),
             target,
-            TransactionEntryPoint::Custom(entry_point.into()),
+            TransactionEntryPoint::Call,
+            category as u8,
             Self::DEFAULT_SCHEDULING,
         );
         TransactionV1Builder::new(body)
@@ -293,7 +302,7 @@ impl<'a> TransactionV1Builder<'a> {
     #[cfg(any(feature = "testing", test))]
     pub fn new_random_with_category_and_timestamp_and_ttl(
         rng: &mut TestRng,
-        category: &TransactionCategory,
+        category: u8,
         timestamp: Option<Timestamp>,
         ttl: Option<TimeDiff>,
     ) -> Self {

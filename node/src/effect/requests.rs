@@ -21,20 +21,21 @@ use casper_binary_port::{
 use casper_storage::{
     block_store::types::ApprovalsHashes,
     data_access_layer::{
+        prefixed_values::{PrefixedValuesRequest, PrefixedValuesResult},
         tagged_values::{TaggedValuesRequest, TaggedValuesResult},
-        AddressableEntityResult, BalanceRequest, BalanceResult, EraValidatorsRequest,
-        EraValidatorsResult, ExecutionResultsChecksumResult, PutTrieRequest, PutTrieResult,
-        QueryRequest, QueryResult, RoundSeigniorageRateRequest, RoundSeigniorageRateResult,
-        TotalSupplyRequest, TotalSupplyResult, TrieRequest, TrieResult,
+        AddressableEntityResult, BalanceRequest, BalanceResult, EntryPointsResult,
+        EraValidatorsRequest, EraValidatorsResult, ExecutionResultsChecksumResult, PutTrieRequest,
+        PutTrieResult, QueryRequest, QueryResult, SeigniorageRecipientsRequest,
+        SeigniorageRecipientsResult, TrieRequest, TrieResult,
     },
     DbRawBytesSpec,
 };
 use casper_types::{
     execution::ExecutionResult, Approval, AvailableBlockRange, Block, BlockHash, BlockHeader,
     BlockSignatures, BlockSynchronizerStatus, BlockV2, ChainspecRawBytes, DeployHash, Digest,
-    DisplayIter, EraId, ExecutionInfo, FinalitySignature, FinalitySignatureId, Key, NextUpgrade,
-    ProtocolVersion, PublicKey, TimeDiff, Timestamp, Transaction, TransactionHash,
-    TransactionHeader, TransactionId, Transfer,
+    DisplayIter, EntityAddr, EraId, ExecutionInfo, FinalitySignature, FinalitySignatureId, Key,
+    NextUpgrade, ProtocolUpgradeConfig, ProtocolVersion, PublicKey, TimeDiff, Timestamp,
+    Transaction, TransactionHash, TransactionHeader, TransactionId, Transfer,
 };
 
 use super::{AutoClosingResponder, GossipTarget, Responder};
@@ -52,6 +53,7 @@ use crate::{
         network::NetworkInsights,
         transaction_acceptor,
     },
+    contract_runtime::ExecutionPreState,
     reactor::main_reactor::ReactorState,
     types::{
         appendable_block::AppendableBlock, BlockExecutionResultsOrChunk,
@@ -702,6 +704,7 @@ pub(crate) enum TransactionBufferRequest {
     GetAppendableBlock {
         timestamp: Timestamp,
         era_id: EraId,
+        request_expiry: Timestamp,
         responder: Responder<AppendableBlock>,
     },
 }
@@ -710,12 +713,15 @@ impl Display for TransactionBufferRequest {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
             TransactionBufferRequest::GetAppendableBlock {
-                timestamp, era_id, ..
+                timestamp,
+                era_id,
+                request_expiry,
+                ..
             } => {
                 write!(
                     formatter,
-                    "request for appendable block at instant {} for era {}",
-                    timestamp, era_id
+                    "request for appendable block at instant {} for era {} (expires at {})",
+                    timestamp, era_id, request_expiry
                 )
             }
         }
@@ -770,6 +776,14 @@ pub(crate) enum ContractRuntimeRequest {
         /// Responder to call with the query result.
         responder: Responder<QueryResult>,
     },
+    /// A query by prefix request.
+    QueryByPrefix {
+        /// Query by prefix request.
+        #[serde(skip_serializing)]
+        request: PrefixedValuesRequest,
+        /// Responder to call with the query result.
+        responder: Responder<PrefixedValuesResult>,
+    },
     /// A balance request.
     GetBalance {
         /// Balance request.
@@ -778,18 +792,6 @@ pub(crate) enum ContractRuntimeRequest {
         /// Responder to call with the balance result.
         responder: Responder<BalanceResult>,
     },
-    /// Get the total supply on the chain.
-    GetTotalSupply {
-        #[serde(skip_serializing)]
-        request: TotalSupplyRequest,
-        responder: Responder<TotalSupplyResult>,
-    },
-    /// Get the round seigniorage rate.
-    GetRoundSeigniorageRate {
-        #[serde(skip_serializing)]
-        request: RoundSeigniorageRateRequest,
-        responder: Responder<RoundSeigniorageRateResult>,
-    },
     /// Returns validator weights.
     GetEraValidators {
         /// Get validators weights request.
@@ -797,6 +799,14 @@ pub(crate) enum ContractRuntimeRequest {
         request: EraValidatorsRequest,
         /// Responder to call with the result.
         responder: Responder<EraValidatorsResult>,
+    },
+    /// Returns the seigniorage recipients snapshot at the given state root hash.
+    GetSeigniorageRecipients {
+        /// Get seigniorage recipients request.
+        #[serde(skip_serializing)]
+        request: SeigniorageRecipientsRequest,
+        /// Responder to call with the result.
+        responder: Responder<SeigniorageRecipientsResult>,
     },
     /// Return all values at a given state root hash and given key tag.
     GetTaggedValues {
@@ -812,14 +822,21 @@ pub(crate) enum ContractRuntimeRequest {
         state_root_hash: Digest,
         responder: Responder<ExecutionResultsChecksumResult>,
     },
-    /// Returns an `AddressableEntity` if found under the given key.  If a legacy `Account`
+    /// Returns an `AddressableEntity` if found under the given entity_addr.  If a legacy `Account`
     /// or contract exists under the given key, it will be migrated to an `AddressableEntity`
     /// and returned. However, global state is not altered and the migrated record does not
     /// actually exist.
     GetAddressableEntity {
         state_root_hash: Digest,
-        key: Key,
+        entity_addr: EntityAddr,
         responder: Responder<AddressableEntityResult>,
+    },
+    /// Returns a singular entry point based under the given state root hash and entry
+    /// point key.
+    GetEntryPoint {
+        state_root_hash: Digest,
+        key: Key,
+        responder: Responder<EntryPointsResult>,
     },
     /// Get a trie or chunk by its ID.
     GetTrie {
@@ -851,6 +868,15 @@ pub(crate) enum ContractRuntimeRequest {
         era_id: EraId,
         responder: Responder<Option<u8>>,
     },
+    DoProtocolUpgrade {
+        protocol_upgrade_config: ProtocolUpgradeConfig,
+        next_block_height: u64,
+        parent_hash: BlockHash,
+        parent_seed: Digest,
+    },
+    UpdatePreState {
+        new_pre_state: ExecutionPreState,
+    },
 }
 
 impl Display for ContractRuntimeRequest {
@@ -867,28 +893,18 @@ impl Display for ContractRuntimeRequest {
             } => {
                 write!(formatter, "query request: {:?}", query_request)
             }
+            ContractRuntimeRequest::QueryByPrefix { request, .. } => {
+                write!(formatter, "query by prefix request: {:?}", request)
+            }
             ContractRuntimeRequest::GetBalance {
                 request: balance_request,
                 ..
             } => write!(formatter, "balance request: {:?}", balance_request),
-            ContractRuntimeRequest::GetTotalSupply {
-                request: total_supply_request,
-                ..
-            } => {
-                write!(formatter, "get total supply: {:?}", total_supply_request)
-            }
-            ContractRuntimeRequest::GetRoundSeigniorageRate {
-                request: round_seigniorage_rate_request,
-                ..
-            } => {
-                write!(
-                    formatter,
-                    "get round seigniorage rate: {:?}",
-                    round_seigniorage_rate_request
-                )
-            }
             ContractRuntimeRequest::GetEraValidators { request, .. } => {
                 write!(formatter, "get era validators: {:?}", request)
+            }
+            ContractRuntimeRequest::GetSeigniorageRecipients { request, .. } => {
+                write!(formatter, "get seigniorage recipients for {:?}", request)
             }
             ContractRuntimeRequest::GetTaggedValues {
                 request: get_all_values_request,
@@ -909,13 +925,13 @@ impl Display for ContractRuntimeRequest {
             ),
             ContractRuntimeRequest::GetAddressableEntity {
                 state_root_hash,
-                key,
+                entity_addr,
                 ..
             } => {
                 write!(
                     formatter,
                     "get addressable_entity {} under {}",
-                    key, state_root_hash
+                    entity_addr, state_root_hash
                 )
             }
             ContractRuntimeRequest::GetTrie { request, .. } => {
@@ -941,6 +957,34 @@ impl Display for ContractRuntimeRequest {
             }
             ContractRuntimeRequest::GetEraGasPrice { era_id, .. } => {
                 write!(formatter, "Get gas price for era {}", era_id)
+            }
+            ContractRuntimeRequest::GetEntryPoint {
+                state_root_hash,
+                key,
+                ..
+            } => {
+                write!(
+                    formatter,
+                    "get entry point {} under {}",
+                    key, state_root_hash
+                )
+            }
+            ContractRuntimeRequest::DoProtocolUpgrade {
+                protocol_upgrade_config,
+                ..
+            } => {
+                write!(
+                    formatter,
+                    "execute protocol upgrade against config: {:?}",
+                    protocol_upgrade_config
+                )
+            }
+            ContractRuntimeRequest::UpdatePreState { new_pre_state } => {
+                write!(
+                    formatter,
+                    "Updating contract runtimes execution presate: {:?}",
+                    new_pre_state
+                )
             }
         }
     }

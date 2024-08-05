@@ -9,7 +9,9 @@ use casper_engine_test_support::{
     MINIMUM_ACCOUNT_CREATION_BALANCE,
 };
 use casper_execution_engine::{engine_state::Error, execution::ExecError};
-use casper_types::{account::AccountHash, runtime_args, Key, RuntimeArgs, U512};
+use casper_types::{
+    account::AccountHash, runtime_args, HoldBalanceHandling, Key, RuntimeArgs, Timestamp, U512,
+};
 
 use crate::{lmdb_fixture, wasm_utils};
 
@@ -35,8 +37,9 @@ static TRANSFER_1_AMOUNT: Lazy<U512> =
     Lazy::new(|| U512::from(MINIMUM_ACCOUNT_CREATION_BALANCE) + 1000);
 
 fn setup_from_lmdb_fixture() -> LmdbWasmTestBuilder {
-    let (builder, _, _) = lmdb_fixture::builder_from_global_state_fixture(GROUPS_FIXTURE);
-
+    let (mut builder, _, _) = lmdb_fixture::builder_from_global_state_fixture(GROUPS_FIXTURE);
+    builder.with_block_time(Timestamp::now().into());
+    builder.with_gas_hold_config(HoldBalanceHandling::default(), 1200u64);
     builder
 }
 
@@ -652,8 +655,7 @@ fn should_not_call_uncallable_session_from_deploy() {
 }
 
 #[ignore]
-#[allow(unused)]
-// #[test]
+#[test]
 fn should_not_call_group_restricted_stored_payment_code_from_invalid_account() {
     // This test calls a stored payment code that is restricted with a group access using an account
     // that does not have any of the group urefs in context.
@@ -718,8 +720,7 @@ fn should_not_call_group_restricted_stored_payment_code_from_invalid_account() {
 }
 
 #[ignore]
-#[allow(unused)]
-// #[test]
+#[test]
 fn should_call_group_restricted_stored_payment_code() {
     // This test calls a stored payment code that is restricted with a group access using an account
     // that contains urefs from the group.
