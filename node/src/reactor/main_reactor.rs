@@ -929,6 +929,10 @@ impl reactor::Reactor for MainReactor {
                     transaction_buffer::Event::UpdateEraGasPrice(era_id, next_era_gas_price),
                 );
                 effects.extend(self.dispatch_event(effect_builder, rng, reactor_event));
+                let reactor_event = MainEvent::BlockValidator(
+                    block_validator::Event::UpdateEraGasPrice(era_id, next_era_gas_price),
+                );
+                effects.extend(self.dispatch_event(effect_builder, rng, reactor_event));
                 effects
             }
 
@@ -1219,6 +1223,7 @@ impl reactor::Reactor for MainReactor {
             Arc::clone(&chainspec),
             validator_matrix.clone(),
             config.block_validator,
+            chainspec.vacancy_config.min_gas_price,
         );
         let upgrade_watcher =
             UpgradeWatcher::new(chainspec.as_ref(), config.upgrade_watcher, &root_dir)?;
@@ -1517,21 +1522,9 @@ impl MainReactor {
                         ),
                     ));
                 }
-                MetaBlock::Historical(historical_meta_block) => {
-                    // Header type is the same for now so we can use the same `BlockAdded` event;
-                    // When the header will be versioned, a new event will be needed for the
-                    // consensus component.
-                    effects.extend(reactor::wrap_effects(
-                        MainEvent::Consensus,
-                        self.consensus.handle_event(
-                            effect_builder,
-                            rng,
-                            consensus::Event::BlockAdded {
-                                header: Box::new(historical_meta_block.block.clone_header()),
-                                header_hash: *historical_meta_block.block.hash(),
-                            },
-                        ),
-                    ));
+                MetaBlock::Historical(_historical_meta_block) => {
+                    // Historical meta blocks aren't of interest to consensus - consensus only
+                    // cares about new blocks. Hence, we can just do nothing here.
                 }
             }
         }

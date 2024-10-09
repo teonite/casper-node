@@ -199,6 +199,7 @@ mod tests {
         nop: 25,
         current_memory: 26,
         grow_memory: 27,
+        sign: 28,
     };
     static EXPECTED_GENESIS_HOST_FUNCTION_COSTS: Lazy<HostFunctionCosts> =
         Lazy::new(|| HostFunctionCosts {
@@ -233,7 +234,8 @@ mod tests {
             read_host_buffer: HostFunction::new(126, [0, 1, 2]),
             create_contract_package_at_hash: HostFunction::new(106, [0, 1]),
             create_contract_user_group: HostFunction::new(107, [0, 1, 2, 3, 4, 5, 6, 7]),
-            add_contract_version: HostFunction::new(102, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+            add_contract_version: HostFunction::new(102, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+            add_package_version: HostFunction::new(102, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
             disable_contract_version: HostFunction::new(109, [0, 1, 2, 3]),
             call_contract: HostFunction::new(104, [0, 1, 2, 3, 4, 5, 6]),
             call_versioned_contract: HostFunction::new(105, [0, 1, 2, 3, 4, 5, 6, 7, 8]),

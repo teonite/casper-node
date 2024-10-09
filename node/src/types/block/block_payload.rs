@@ -19,14 +19,25 @@ use casper_types::{
 /// From the view of the consensus protocol this is the "consensus value": The protocol deals with
 /// finalizing an order of `BlockPayload`s. Only after consensus has been reached, the block's
 /// deploys actually get executed, and the executed block gets signed.
-#[derive(
-    Clone, DataSize, Debug, PartialOrd, Ord, PartialEq, Eq, Hash, Serialize, Deserialize, Default,
-)]
+#[derive(Clone, DataSize, Debug, PartialOrd, Ord, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BlockPayload {
     transactions: BTreeMap<u8, Vec<(TransactionHash, BTreeSet<Approval>)>>,
     accusations: Vec<PublicKey>,
     rewarded_signatures: RewardedSignatures,
     random_bit: bool,
+    current_gas_price: u8,
+}
+
+impl Default for BlockPayload {
+    fn default() -> Self {
+        Self {
+            transactions: Default::default(),
+            accusations: vec![],
+            rewarded_signatures: Default::default(),
+            random_bit: false,
+            current_gas_price: 1u8,
+        }
+    }
 }
 
 impl BlockPayload {
@@ -35,12 +46,14 @@ impl BlockPayload {
         accusations: Vec<PublicKey>,
         rewarded_signatures: RewardedSignatures,
         random_bit: bool,
+        current_gas_price: u8,
     ) -> Self {
         BlockPayload {
             transactions,
             accusations,
             rewarded_signatures,
             random_bit,
+            current_gas_price,
         }
     }
 
@@ -49,7 +62,7 @@ impl BlockPayload {
         let mut ret = vec![];
         if let Some(transactions) = self.transactions.get(&MINT_LANE_ID) {
             for transaction in transactions {
-                ret.push(transaction)
+                ret.push(transaction);
             }
         }
         ret.into_iter()
@@ -60,7 +73,7 @@ impl BlockPayload {
         let mut ret = vec![];
         if let Some(transactions) = self.transactions.get(&AUCTION_LANE_ID) {
             for transaction in transactions {
-                ret.push(transaction)
+                ret.push(transaction);
             }
         }
         ret.into_iter()
@@ -71,7 +84,7 @@ impl BlockPayload {
         let mut ret = vec![];
         if let Some(transactions) = self.transactions.get(&INSTALL_UPGRADE_LANE_ID) {
             for transaction in transactions {
-                ret.push(transaction)
+                ret.push(transaction);
             }
         }
         ret.into_iter()
@@ -85,7 +98,7 @@ impl BlockPayload {
         let mut ret = vec![];
         if let Some(transactions) = self.transactions.get(&category) {
             for transaction in transactions {
-                ret.push(transaction)
+                ret.push(transaction);
             }
         }
         ret.into_iter()
@@ -93,7 +106,7 @@ impl BlockPayload {
 
     pub(crate) fn finalized_payload(&self) -> BTreeMap<u8, Vec<TransactionHash>> {
         let mut ret = BTreeMap::new();
-        for (category, transactions) in self.transactions.iter() {
+        for (category, transactions) in &self.transactions {
             let transactions = transactions.iter().map(|(tx, _)| *tx).collect();
             ret.insert(*category, transactions);
         }
@@ -104,11 +117,7 @@ impl BlockPayload {
     /// Returns count of transactions by category.
     pub fn count(&self, category: Option<u8>) -> usize {
         match category {
-            None => self
-                .transactions
-                .values()
-                .map(|transactions| transactions.len())
-                .sum(),
+            None => self.transactions.values().map(Vec::len).sum(),
             Some(category) => match self.transactions.get(&category) {
                 Some(values) => values.len(),
                 None => 0,
@@ -133,6 +142,11 @@ impl BlockPayload {
     /// The finality signatures for the past blocks that will be rewarded in this block.
     pub(crate) fn rewarded_signatures(&self) -> &RewardedSignatures {
         &self.rewarded_signatures
+    }
+
+    /// The current gas price to execute the payload against.
+    pub(crate) fn current_gas_price(&self) -> u8 {
+        self.current_gas_price
     }
 
     pub(crate) fn all_transaction_hashes(&self) -> impl Iterator<Item = TransactionHash> {

@@ -14,6 +14,7 @@ use strum::EnumDiscriminants;
 
 use casper_types::{
     crypto, AsymmetricType, Chainspec, Digest, ProtocolVersion, PublicKey, Signature,
+    AUCTION_LANE_ID, INSTALL_UPGRADE_LANE_ID, MINT_LANE_ID,
 };
 #[cfg(test)]
 use casper_types::{testing::TestRng, SecretKey};

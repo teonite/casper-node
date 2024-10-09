@@ -76,7 +76,8 @@ extern "C" {
     /// * `total_keys`: number of authorization keys used to sign this deploy
     /// * `result_size`: size of the data loaded in the host
     pub fn casper_load_authorization_keys(total_keys: *mut usize, result_size: *mut usize) -> i32;
-    ///
+    /// This function loads a set of named keys from the host. The data will be available through
+    /// the host buffer and can be copied to Wasm memory through [`casper_read_host_buffer`].
     pub fn casper_load_named_keys(total_keys: *mut usize, result_size: *mut usize) -> i32;
     /// This function causes a `Trap`, terminating the currently running module,
     /// but first copies the bytes from `value_ptr` to `value_ptr + value_size` to
@@ -94,7 +95,7 @@ extern "C" {
     /// * `value_ptr`: pointer to bytes representing the value to return to the caller
     /// * `value_size`: size of the value (in bytes)
     pub fn casper_ret(value_ptr: *const u8, value_size: usize) -> !;
-    ///
+    /// Retrieves a key from the named keys by name and writes it to the output buffer.
     pub fn casper_get_key(
         name_ptr: *const u8,
         name_size: usize,
@@ -102,16 +103,16 @@ extern "C" {
         output_size: usize,
         bytes_written_ptr: *mut usize,
     ) -> i32;
-    ///
+    /// This function checks if the key with the given name is present in the named keys.
     pub fn casper_has_key(name_ptr: *const u8, name_size: usize) -> i32;
-    ///
+    /// This function stores a key under the given name in the named keys.
     pub fn casper_put_key(
         name_ptr: *const u8,
         name_size: usize,
         key_ptr: *const u8,
         key_size: usize,
     );
-    ///
+    /// This function removes a key with the given name from the named keys.
     pub fn casper_remove_key(name_ptr: *const u8, name_size: usize);
     /// This function causes a `Trap` which terminates the currently running
     /// module. Additionally, it signals that the current entire phase of
@@ -198,8 +199,8 @@ extern "C" {
     ///
     /// # Arguments
     ///
-    /// * `public_key` - pointer to the bytes in wasm memory representing the
-    ///  public key to update, presently only 32-byte public keys are supported
+    /// * `public_key` - pointer to the bytes in wasm memory representing the public key to update,
+    ///   presently only 32-byte public keys are supported.
     /// * `weight` - the weight to assign to this public key
     pub fn casper_update_associated_key(
         account_hash_ptr: *const u8,
@@ -404,13 +405,13 @@ extern "C" {
     ///
     /// * `dest_ptr` - pointer to position in wasm memory to write the result
     pub fn casper_get_phase(dest_ptr: *mut u8);
-    ///
+    /// Retrieves a system contract by index and writes it to the destination pointer.
     pub fn casper_get_system_contract(
         system_contract_index: u32,
         dest_ptr: *mut u8,
         dest_size: usize,
     ) -> i32;
-    ///
+    /// Retrieves the main purse and writes it to the destination pointer.
     pub fn casper_get_main_purse(dest_ptr: *mut u8);
     /// This function copies the contents of the current runtime buffer into the
     /// wasm memory, beginning at the provided offset. It is intended that this
@@ -463,6 +464,33 @@ extern "C" {
         existing_urefs_ptr: *const u8,
         existing_urefs_size: usize,
         output_size_ptr: *mut usize,
+    ) -> i32;
+    /// Adds new contract version to a contract package.
+    ///
+    /// # Arguments
+    ///
+    /// * `contract_package_hash_ptr` - pointer to serialized contract package hash.
+    /// * `contract_package_hash_size` - size of contract package hash in serialized form.
+    /// * `version_ptr` - output parameter where new version assigned by host is set
+    /// * `entry_points_ptr` - pointer to serialized [`casper_types::EntryPoints`]
+    /// * `entry_points_size` - size of serialized [`casper_types::EntryPoints`]
+    /// * `named_keys_ptr` - pointer to serialized [`casper_types::contracts::NamedKeys`]
+    /// * `named_keys_size` - size of serialized [`casper_types::contracts::NamedKeys`]
+    /// * `output_ptr` - pointer to a memory where host assigned contract hash is set to
+    /// * `output_size` - size of memory area that host can write to
+    /// * `bytes_written_ptr` - pointer to a value where host will set a number of bytes written to
+    ///   the `output_size` pointer
+    pub fn casper_add_contract_version(
+        contract_package_hash_ptr: *const u8,
+        contract_package_hash_size: usize,
+        version_ptr: *const u32,
+        entry_points_ptr: *const u8,
+        entry_points_size: usize,
+        named_keys_ptr: *const u8,
+        named_keys_size: usize,
+        output_ptr: *mut u8,
+        output_size: usize,
+        bytes_written_ptr: *mut usize,
     ) -> i32;
     /// Adds a new version to a package.
     ///

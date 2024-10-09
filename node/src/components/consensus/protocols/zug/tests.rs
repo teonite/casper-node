@@ -349,6 +349,7 @@ fn new_payload(random_bit: bool) -> Arc<BlockPayload> {
         vec![],
         Default::default(),
         random_bit,
+        1u8,
     ))
 }
 
@@ -518,7 +519,7 @@ fn zug_no_fault() {
     // Bob votes false in round 0. That's not a quorum yet.
     let msg = create_message(&validators, 0, vote(false), &BOB_SIGNER.clone());
     let mut outcomes = sc_c.handle_message(&mut rng, sender, msg, timestamp);
-        process_signature_requests(&mut outcomes, CAROL_SIGNER.clone(), &mut sc_c);
+    process_signature_requests(&mut outcomes, CAROL_SIGNER.clone(), &mut sc_c);
     expect_no_gossip_block_finalized(outcomes);
 
     // On timeout, Carol votes to make round 1 skippable.

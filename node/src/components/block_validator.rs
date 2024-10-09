@@ -87,6 +87,8 @@ pub(crate) struct BlockValidator {
     validation_states: HashMap<ProposedBlock<ClContext>, BlockValidationState>,
     /// Requests awaiting storing of a block, keyed by the height of the block being awaited.
     requests_on_hold: BTreeMap<u64, Vec<BlockValidationRequest>>,
+    /// The gas price for validation of proposed blocks.
+    current_gas_price: u8,
 }
 
 impl BlockValidator {
@@ -95,6 +97,7 @@ impl BlockValidator {
         chainspec: Arc<Chainspec>,
         validator_matrix: ValidatorMatrix,
         config: Config,
+        current_gas_price: u8,
     ) -> Self {
         BlockValidator {
             chainspec,
@@ -102,6 +105,7 @@ impl BlockValidator {
             config,
             validation_states: HashMap::new(),
             requests_on_hold: BTreeMap::new(),
+            current_gas_price,
         }
     }
 
@@ -456,6 +460,7 @@ impl BlockValidator {
             missing_signatures,
             sender,
             responder,
+            self.current_gas_price,
             self.chainspec.as_ref(),
         );
         let effects = match state.start_fetching() {
@@ -521,6 +526,10 @@ impl BlockValidator {
         }
     }
 
+    fn update_era_price(&mut self, current_price: u8) {
+        self.current_gas_price = current_price;
+    }
+
     fn handle_transaction_fetched<REv>(
         &mut self,
         effect_builder: EffectBuilder<REv>,
@@ -543,7 +552,7 @@ impl BlockValidator {
             Err(error) => warn!(%transaction_hash, %error, "could not fetch transaction"),
         }
         match result {
-            Ok(FetchedData::FromStorage { item }) | Ok(FetchedData::FromPeer { item, .. }) => {
+            Ok(FetchedData::FromStorage { item } | FetchedData::FromPeer { item, .. }) => {
                 let item_hash = item.hash();
                 if item_hash != transaction_hash {
                     // Hard failure - change state to Invalid.
@@ -661,7 +670,7 @@ impl BlockValidator {
             }
         }
         match result {
-            Ok(FetchedData::FromStorage { .. }) | Ok(FetchedData::FromPeer { .. }) => {
+            Ok(FetchedData::FromStorage { .. } | FetchedData::FromPeer { .. }) => {
                 let mut effects = Effects::new();
                 for state in self.validation_states.values_mut() {
                     let responders = state.try_add_signature(&finality_signature_id);
@@ -842,6 +851,10 @@ where
                 *finality_signature_id,
                 result,
             ),
+            Event::UpdateEraGasPrice(_, current_price) => {
+                self.update_era_price(current_price);
+                Effects::new()
+            }
         }
     }
 }

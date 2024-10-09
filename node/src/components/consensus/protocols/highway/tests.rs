@@ -33,10 +33,9 @@ use crate::{
 
 use crate::consensus::{
     highway_core::highway::HashedWireUnit,
-    tests::utils::{ALICE_SIGNER, BOB_SIGNER, CAROL_SIGNER, DAVE_SIGNER, ELLEN_SIGNER},
+    tests::utils::{ALICE_SIGNER, BOB_SIGNER, CAROL_SIGNER},
     ValidatorSecret,
 };
-
 
 /// Returns a new `State` with `ClContext` parameters suitable for tests.
 pub(crate) fn new_test_state<I, T>(weights: I, seed: u64) -> State<ClContext>
@@ -97,6 +96,7 @@ where
         start_timestamp,
         0,
         start_timestamp,
+        None,
     );
     // We expect three messages:
     // * log participation timer,
@@ -158,6 +158,7 @@ fn send_a_valid_wire_unit() {
             vec![],
             Default::default(),
             false,
+            1u8,
         ))),
         seq_number,
         timestamp: now,
@@ -207,6 +208,7 @@ fn detect_doppelganger() {
         vec![],
         Default::default(),
         false,
+        1u8,
     ));
     let hwunit: HashedWireUnit<ClContext> = WireUnit {
         panorama,

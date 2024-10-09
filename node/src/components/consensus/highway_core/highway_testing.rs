@@ -1,3 +1,4 @@
+// FIXME(mwojcik): remove commented out code
 #![allow(clippy::arithmetic_side_effects)] // In tests, overflows panic anyway.
 
 use std::{
@@ -117,12 +118,12 @@ impl HighwayMessage {
         match effect {
             // The effect is `ValidVertex` but we want to gossip it to other
             // validators so for them it's just `Vertex` that needs to be validated.
-            Effect::NewVertex(ValidVertex(v)) => HighwayMessage::NewVertex(Box::new(v)),
-            Effect::ScheduleTimer(t) => HighwayMessage::Timer(t),
+            Effect::NewVertex(ValidVertex(v)) => Some(HighwayMessage::NewVertex(Box::new(v))),
+            Effect::ScheduleTimer(t) => Some(HighwayMessage::Timer(t)),
             Effect::RequestNewBlock(block_context, _expiry) => {
-                HighwayMessage::RequestBlock(block_context)
+                Some(HighwayMessage::RequestBlock(block_context))
             }
-            Effect::WeAreFaulty(fault) => HighwayMessage::WeAreFaulty(Box::new(fault)),
+            Effect::WeAreFaulty(fault) => Some(HighwayMessage::WeAreFaulty(Box::new(fault))),
             Effect::SignWireUnit(_) | Effect::SignEndorsement(_) | Effect::SignPing(_) => None,
         }
     }
@@ -940,7 +941,8 @@ impl<DS: DeliveryStrategy> HighwayTestHarnessBuilder<DS> {
             |(vid, secrets): (ValidatorId, &mut HashMap<ValidatorId, TestSecret>)| {
                 let v_sec = secrets.remove(&vid).expect("Secret key should exist.");
 
-                let mut highway = Highway::new(instance_id, validators.clone(), params.clone());
+                let mut highway =
+                    Highway::new(instance_id, validators.clone(), params.clone(), None);
                 let effects = highway.activate_validator(vid, start_time, None, Weight(ftt));
 
                 let finality_detector = FinalityDetector::new(Weight(ftt));
