@@ -2592,7 +2592,7 @@ where
                 }
             }
             SignatureRequestType::GossipMessage => {
-                error!(
+                debug!(
                     our_idx = self.our_idx(),
                     %round_id,
                     ?signed_msg.content,
