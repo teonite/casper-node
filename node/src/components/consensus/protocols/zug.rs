@@ -460,6 +460,22 @@ impl<C: Context + 'static> Zug<C> {
             .map_or(false, |round| round.has_voted(validator_idx))
     }
 
+    /// Registers that vote in a given round is awaiting signature.
+    fn register_pending_vote_signature(&mut self, round_id: RoundId) {
+        self.round_mut(round_id).set_vote_signature_pending(true);
+    }
+
+    /// Registers that vote in a given round is no longer awaiting signature.
+    fn finalize_pending_vote_signature(&mut self, round_id: RoundId) {
+        self.round_mut(round_id).set_vote_signature_pending(false);
+    }
+
+    /// Returns whether a voute in a given round is awaiting signature.
+    fn is_vote_signature_pending(&self, round_id: RoundId) -> bool {
+        self.round(round_id)
+            .map_or(false, |round| round.vote_signature_pending())
+    }
+
     /// Request the latest state from a random peer.
     fn handle_sync_peer_timer(&mut self, now: Timestamp, rng: &mut NodeRng) -> ProtocolOutcomes<C> {
         if self.evidence_only || self.finalized_switch_block() {
@@ -691,11 +707,18 @@ impl<C: Context + 'static> Zug<C> {
         }
         let already_signed = match &content {
             Content::Echo(_) => self.has_echoed(round_id, validator_idx),
-            Content::Vote(_) => self.has_voted(round_id, validator_idx),
+            Content::Vote(vote) => {
+                // check if vote signature request is already pending
+                if self.is_vote_signature_pending(round_id) {
+                    return vec![];
+                }
+                self.has_voted(round_id, validator_idx)
+            }
         };
         if already_signed {
             return vec![];
         }
+
         let hash =
             SignedMessage::hash_fields(round_id, self.instance_id(), &content, validator_idx);
         let signed_msg_data =
@@ -708,13 +731,18 @@ impl<C: Context + 'static> Zug<C> {
 
         // check if a signature request for given hash exists already
         if self.pending_signature_requests.contains_key(&hash) {
-            debug!(
+            error!(
                 our_idx = self.our_idx(),
                 %round_id,
                 ?content,
                 "signature request for a given hash exists already"
             );
             return vec![];
+        };
+
+        // register pending vote signature request
+        if let Content::Vote(_) = &content {
+            self.register_pending_vote_signature(round_id);
         };
 
         // store request in pending requests map
@@ -2518,6 +2546,10 @@ where
             };
 
         let round_id = signed_msg.round_id;
+        if let Content::Vote(_) = signed_msg.content {
+            // register that vote signature is no longer pending
+            self.finalize_pending_vote_signature(round_id);
+        };
 
         // We only return the new message if we are able to record it. If that fails we
         // wouldn't know about our own message after a restart and risk double-signing.
@@ -2560,6 +2592,12 @@ where
                 }
             }
             SignatureRequestType::GossipMessage => {
+                error!(
+                    our_idx = self.our_idx(),
+                    %round_id,
+                    ?signed_msg.content,
+                    "received signature for gossip message"
+                );
                 let message = Message::Signed(signed_msg);
                 vec![ProtocolOutcome::CreatedGossipMessage(
                     SerializedMessage::from_message(&message),

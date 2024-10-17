@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(any(feature = "testing", test))]
 use crate::testing::TestRng;
 #[cfg(any(feature = "testing", test))]
-use crate::{SecretKey};
+use crate::SecretKey;
 use crate::{crypto, BlockHash, ChainNameDigest, EraId, PublicKey, Signature};
 
 /// A validator's signature of a block, confirming it is finalized.

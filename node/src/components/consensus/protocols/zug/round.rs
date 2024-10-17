@@ -34,6 +34,8 @@ where
     votes: BTreeMap<bool, ValidatorMap<Option<C::Signature>>>,
     /// The memoized results in this round.
     outcome: RoundOutcome<C>,
+    /// Flag marking that our vote for this round is awaiting signature.
+    vote_signature_pending: bool,
 }
 
 impl<C: Context> Round<C> {
@@ -49,6 +51,7 @@ impl<C: Context> Round<C> {
             echoes: HashMap::new(),
             votes,
             outcome: RoundOutcome::default(),
+            vote_signature_pending: false,
         }
     }
 
@@ -207,6 +210,16 @@ impl<C: Context> Round<C> {
     /// Returns the validator index of this round's leader.
     pub(super) fn leader(&self) -> ValidatorIndex {
         self.leader_idx
+    }
+
+    /// Sets the value of vote signature pending flag.
+    pub(super) fn set_vote_signature_pending(&mut self, value: bool) {
+        self.vote_signature_pending = value;
+    }
+
+    /// Returns the vote signature pending flag value.
+    pub(super) fn vote_signature_pending(&self) -> bool {
+        self.vote_signature_pending
     }
 }
 
