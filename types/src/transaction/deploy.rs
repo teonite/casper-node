@@ -169,8 +169,9 @@ impl Deploy {
             is_valid: OnceCell::new(),
         }
     }
+
     /// Constructs a new signed `Deploy`.
-    #[cfg(any(feature = "std", test))]
+    #[cfg(any(all(feature = "std", feature = "testing"), test))]
     #[allow(clippy::too_many_arguments)]
     pub fn new_signed(
         timestamp: Timestamp,
