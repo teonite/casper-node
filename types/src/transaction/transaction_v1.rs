@@ -153,6 +153,23 @@ impl TryFrom<TransactionV1> for TransactionV1Json {
 }
 
 impl TransactionV1 {
+    pub fn new(
+        hash: TransactionV1Hash,
+        payload: TransactionV1Payload,
+        approvals: BTreeSet<Approval>,
+        #[cfg(any(feature = "once_cell", test))] is_verified: OnceCell<
+            Result<(), InvalidTransactionV1>,
+        >,
+    ) -> TransactionV1 {
+        TransactionV1 {
+            hash,
+            payload,
+            approvals,
+            #[cfg(any(feature = "once_cell", test))]
+            is_verified,
+        }
+    }
+
     #[cfg(any(feature = "std", test, feature = "testing"))]
     pub(crate) fn build(
         chain_name: String,
