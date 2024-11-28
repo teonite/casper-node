@@ -157,16 +157,13 @@ impl TransactionV1 {
         hash: TransactionV1Hash,
         payload: TransactionV1Payload,
         approvals: BTreeSet<Approval>,
-        #[cfg(any(feature = "once_cell", test))] is_verified: OnceCell<
-            Result<(), InvalidTransactionV1>,
-        >,
     ) -> TransactionV1 {
         TransactionV1 {
             hash,
             payload,
             approvals,
             #[cfg(any(feature = "once_cell", test))]
-            is_verified,
+            is_verified: OnceCell::new(),
         }
     }
 
