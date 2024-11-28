@@ -153,7 +153,7 @@ pub struct Deploy {
 
 impl Deploy {
     /// Constructs a new signed `Deploy`.
-    #[cfg(any(all(feature = "std", feature = "testing"), test))]
+    #[cfg(any(feature = "std", test))]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         timestamp: Timestamp,
